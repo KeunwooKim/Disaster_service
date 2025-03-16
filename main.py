@@ -79,6 +79,13 @@ def store_air_inform_three_days():
 
     data_dict = xmltodict.parse(response.text)
     body = data_dict.get("response", {}).get("body", {})
+
+    # totalCount 확인
+    total_count = int(body.get("totalCount", "0"))
+    if total_count == 0:
+        print("Air Inform API: 해당 날짜에 데이터가 없습니다.")
+        return
+
     items_section = body.get("items")
     if items_section is None:
         raise Exception("API 응답에 'items' 섹션이 없습니다. 응답 내용: " + response.text)
