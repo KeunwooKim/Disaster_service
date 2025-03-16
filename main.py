@@ -195,19 +195,30 @@ def get_air_grade():
 
         pm_no = uuid4()
         dt_grade = None
-        try:
-            korea_timezone = timezone(timedelta(hours=9))
-            dt_grade = datetime.strptime(extracted["dataTime"], "%Y-%m-%d %H:%M:%S") \
-                .replace(tzinfo=korea_timezone).astimezone(timezone.utc)
-        except Exception as e:
-            logging.error(f"날짜 변환 실패 (airgrade data_time, 포맷 1): {e}")
+        raw_time = extracted["dataTime"]
+        korea_timezone = timezone(timedelta(hours=9))
+        # 24:00인 경우 특별 처리: "24:"를 "00:"으로 바꾸고 날짜에 1일을 추가
+        if "24:" in raw_time:
             try:
-                korea_timezone = timezone(timedelta(hours=9))
-                dt_grade = datetime.strptime(extracted["dataTime"], "%Y-%m-%d %H:%M") \
-                    .replace(tzinfo=korea_timezone).astimezone(timezone.utc)
-            except Exception as e2:
-                logging.error(f"날짜 변환 실패 (airgrade data_time, 포맷 2): {e2}")
+                new_time = raw_time.replace("24:", "00:")
+                dt = datetime.strptime(new_time, "%Y-%m-%d %H:%M")
+                dt += timedelta(days=1)
+                dt_grade = dt.replace(tzinfo=korea_timezone).astimezone(timezone.utc)
+            except Exception as e:
+                logging.error(f"날짜 변환 실패 (special 24: handling): {e}")
                 dt_grade = datetime.utcnow()
+        else:
+            try:
+                dt_grade = datetime.strptime(raw_time, "%Y-%m-%d %H:%M:%S") \
+                    .replace(tzinfo=korea_timezone).astimezone(timezone.utc)
+            except Exception as e:
+                logging.error(f"날짜 변환 실패 (airgrade data_time, 포맷 1): {e}")
+                try:
+                    dt_grade = datetime.strptime(raw_time, "%Y-%m-%d %H:%M") \
+                        .replace(tzinfo=korea_timezone).astimezone(timezone.utc)
+                except Exception as e2:
+                    logging.error(f"날짜 변환 실패 (airgrade data_time, 포맷 2): {e2}")
+                    dt_grade = datetime.utcnow()
 
         try:
             pm10_grade = int(extracted["pm10Grade1h"]) if extracted["pm10Grade1h"] not in (None, "") else 0
