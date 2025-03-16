@@ -78,7 +78,18 @@ def store_air_inform_three_days():
         raise Exception("Air Inform API 호출 실패")
 
     data_dict = xmltodict.parse(response.text)
-    items = data_dict["response"]["body"]["items"]["item"]
+    body = data_dict.get("response", {}).get("body", {})
+    items_section = body.get("items")
+    if items_section is None:
+        raise Exception("API 응답에 'items' 섹션이 없습니다. 응답 내용: " + response.text)
+
+    items = items_section.get("item")
+    if items is None:
+        raise Exception("API 응답에 'item' 데이터가 없습니다. 응답 내용: " + response.text)
+
+    # item이 단일 객체인 경우 리스트로 변환
+    if not isinstance(items, list):
+        items = [items]
 
     # 예보일자(informData)를 기준으로 항목을 그룹화 (최대 3일치 데이터)
     forecast_data = {}
@@ -159,7 +170,12 @@ def get_air_grade():
         raise Exception("Air Grade API 호출 실패")
 
     data_dict = xmltodict.parse(response.text)
-    items = data_dict["response"]["body"]["items"]["item"]
+    items = data_dict.get("response", {}).get("body", {}).get("items", {}).get("item")
+    if items is None:
+        raise Exception("API 응답에 'item' 데이터가 없습니다. 응답 내용: " + response.text)
+    if not isinstance(items, list):
+        items = [items]
+
     filtered_data = []
     for item in items:
         extracted = {
