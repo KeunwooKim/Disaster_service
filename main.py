@@ -28,7 +28,7 @@ API_KEY = os.getenv(
 )
 
 
-# Cassandra 연결을 관리하는 클래스
+# Cassandra 연결을 관리하는 클래스 (keyspace: disaster_service)
 class CassandraConnector:
     def __init__(self, keyspace="disaster_service"):
         self.keyspace = keyspace
@@ -196,16 +196,11 @@ def get_air_grade():
                 dt_grade = datetime.utcnow()
         else:
             try:
-                dt_grade = datetime.strptime(raw_time, "%Y-%m-%d %H:%M:%S") \
+                dt_grade = datetime.strptime(raw_time, "%Y-%m-%d %H:%M") \
                     .replace(tzinfo=korea_timezone).astimezone(timezone.utc)
             except Exception as e:
-                logging.error(f"날짜 변환 실패 (airgrade data_time, 포맷 1): {e}")
-                try:
-                    dt_grade = datetime.strptime(raw_time, "%Y-%m-%d %H:%M") \
-                        .replace(tzinfo=korea_timezone).astimezone(timezone.utc)
-                except Exception as e2:
-                    logging.error(f"날짜 변환 실패 (airgrade data_time, 포맷 2): {e2}")
-                    dt_grade = datetime.utcnow()
+                logging.error(f"날짜 변환 실패 (airgrade data_time): {e}")
+                dt_grade = datetime.utcnow()
 
         try:
             pm10_grade = int(extracted["pm10Grade1h"]) if extracted["pm10Grade1h"] not in (None, "") else 0
@@ -354,7 +349,6 @@ class DisasterMessageCrawler:
         print("종료하려면 'q' 또는 'exit'를 입력하고, 저장 현황을 보려면 '1'을 입력하세요.")
         while True:
             try:
-                # 사용자 입력 비동기 체크
                 if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
                     user_input = sys.stdin.readline().strip().lower()
                     if user_input in ["q", "exit"]:
@@ -409,9 +403,7 @@ class DisasterMessageCrawler:
 def main():
     try:
         print("프로그램 시작")
-        # Air Inform 데이터 호출 및 DB 저장
         air_inform_data = get_air_inform()
-        # Air Grade 데이터 호출 및 DB 저장
         air_grade_data = get_air_grade()
         unified_air_output = {
             "air_inform_data": air_inform_data["data"] if isinstance(air_inform_data,
