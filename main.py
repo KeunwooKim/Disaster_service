@@ -213,22 +213,13 @@ def get_air_grade_all_regions():
 
             sido = extracted["sidoName"] if extracted["sidoName"] is not None else ""
 
-            # 중복 체크: 동일 지역, 동일 발표시간의 레코드가 이미 있는지 조회 (ALLOW FILTERING 사용)
-            check_query = SimpleStatement("""
-                SELECT count(*) FROM airgrade WHERE sidoName=%s AND data_time=%s ALLOW FILTERING
-            """)
-            result = connector.session.execute(check_query, (sido, dt_grade))
-            exists = result.one().count > 0
-            if exists:
-                print(f"{region}의 {raw_time} 데이터는 이미 저장되어 있습니다.")
-                continue
-
+            # 수정된 INSERT 쿼리: 컬럼 "sidoName"은 대소문자를 유지하기 위해 따옴표 사용
             insert_stmt = SimpleStatement("""
-                INSERT INTO airgrade (pm_no, data_time, pm10_grade, pm25_grade, sido)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO airgrade (record_id, data_time, pm10_grade, pm25_grade, "sidoName")
+                VALUES (%s, %s, %s, %s, %s) IF NOT EXISTS
             """)
             connector.session.execute(insert_stmt, (
-                uuid4(),
+                record_key,
                 dt_grade,
                 pm10_grade,
                 pm25_grade,
