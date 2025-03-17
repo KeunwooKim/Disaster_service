@@ -27,6 +27,7 @@ API_KEY = os.getenv(
     "7dWUeNJAqaan8oJAs5CbDWKnWaJpLWoxd+lB97UDDRgFfSjfKD7ZGHxM+kRAoZqsga+WlheugBMS2q9WCSaUNg=="
 )
 
+
 # Cassandra 연결을 관리하는 클래스 (keyspace: disaster_service)
 class CassandraConnector:
     def __init__(self, keyspace="disaster_service"):
@@ -57,27 +58,26 @@ class CassandraConnector:
                 else:
                     raise Exception("Cassandra 연결에 실패하였습니다. 종료합니다.")
 
+
 # 전역 CassandraConnector 객체 생성
 connector = CassandraConnector()
 
-# Air API 엔드포인트 (HTTP -> HTTPS 변경)
-AIR_INFORM_API = "https://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth"
-AIR_GRADE_API = "https://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty"
+# Air API 엔드포인트
+AIR_INFORM_API = "http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth"
+AIR_GRADE_API = "http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty"
+
 
 # (1) 대기질 예보통보 (airinform) API 호출 및 중복 없이 Cassandra 저장
 def get_air_inform():
-    # 실제로 데이터가 있는 날짜를 설정해 보세요. 예: 과거 날짜나 API 문서에서 권장하는 날짜
-    # 여기서는 예시로 2025-03-17로 하드코딩
     params = {
-        "searchDate": "2025-03-17",  # 날짜에 맞게 조정
+        "searchDate": datetime.now().strftime("%Y-%m-%d"),
         "returnType": "xml",
         "numOfRows": "100",
         "pageNo": "1",
         "serviceKey": API_KEY
     }
     try:
-        # HTTPS + timeout=20
-        response = requests.get(AIR_INFORM_API, params=params, timeout=20)
+        response = requests.get(AIR_INFORM_API, params=params, timeout=10)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
         logging.error(f"Air Inform API 호출 실패: {e}")
@@ -126,10 +126,10 @@ def get_air_inform():
             forecast_date = None
 
         search_date = datetime.now().date()
-        cause = extracted["informCause"] or ""
-        code = extracted["informCode"] or ""
-        grade = extracted["informGrade"] or ""
-        overall = extracted["informOverall"] or ""
+        cause = extracted["informCause"] if extracted["informCause"] is not None else ""
+        code = extracted["informCode"] if extracted["informCode"] is not None else ""
+        grade = extracted["informGrade"] if extracted["informGrade"] is not None else ""
+        overall = extracted["informOverall"] if extracted["informOverall"] is not None else ""
 
         insert_stmt = SimpleStatement("""
             INSERT INTO airinform (record_id, cause, code, data_time, forecast_date, grade, overall, search_date)
@@ -149,9 +149,10 @@ def get_air_inform():
 
     return {"status": "success", "data": filtered_data}
 
-# (2) 시도별 실시간 미세먼지 정보 (air_grade) API 호출
-# 대표 항목(첫 번째)만 뽑고, 중복 체크로 DB 저장
+
+# (2) 시도별 실시간 미세먼지 정보 (air_grade) API 호출 및 대표 항목만 저장
 def get_air_grade_all_regions():
+    # 저장할 지역 리스트 (각 지역의 대표 데이터만 필요)
     regions = ["서울", "부산", "대구", "인천", "광주", "대전", "울산",
                "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주", "세종"]
     all_filtered_data = []
@@ -165,8 +166,7 @@ def get_air_grade_all_regions():
             "ver": "1.0"
         }
         try:
-            # HTTPS + timeout=20
-            response = requests.get(AIR_GRADE_API, params=params, timeout=20)
+            response = requests.get(AIR_GRADE_API, params=params, timeout=10)
             response.raise_for_status()
         except requests.exceptions.RequestException as e:
             logging.error(f"Air Grade API 호출 실패 for {region}: {e}")
@@ -212,6 +212,7 @@ def get_air_grade_all_regions():
 
         sido = representative["sidoName"] if representative["sidoName"] is not None else ""
 
+        # 중복 체크: 동일 지역, 동일 발표시간 데이터가 있는지 DB 조회 (ALLOW FILTERING 사용)
         check_query = SimpleStatement("""
             SELECT count(*) FROM airgrade WHERE sido=%s AND data_time=%s ALLOW FILTERING
         """)
@@ -235,6 +236,8 @@ def get_air_grade_all_regions():
         print(f"Air Grade 데이터 저장 완료 for {region} - record_key: {record_key}")
     return {"status": "success", "data": all_filtered_data}
 
+
+# 재난문자 크롤러 클래스 (이전 코드 유지)
 class DisasterMessageCrawler:
     def __init__(self):
         print("크롤러 초기화 중...")
@@ -252,7 +255,7 @@ class DisasterMessageCrawler:
             return
         try:
             for msg in messages_list:
-                insert_statement = SimpleStatement("""
+                query = SimpleStatement("""
                     INSERT INTO disaster_message (
                         message_id, emergency_level, DM_ntype, DM_stype,
                         issuing_agency, issued_at, message_content
@@ -260,7 +263,7 @@ class DisasterMessageCrawler:
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                     IF NOT EXISTS
                 """)
-                self.session.execute(insert_statement, (
+                self.session.execute(query, (
                     msg['message_id'],
                     msg['emergency_level'],
                     msg['DM_ntype'],
@@ -293,78 +296,65 @@ class DisasterMessageCrawler:
             raise
 
     def check_disaster_messages(self):
-        """
-        최대 3회까지 페이지 접속을 재시도하여 net::ERR_CONNECTION_RESET 같은 일시적 오류 방어
-        """
-        attempt = 0
-        max_attempts = 3
-        while attempt < max_attempts:
-            try:
-                print("웹페이지 접속 시도 중...")
-                self.driver.get('https://www.safekorea.go.kr/idsiSFK/neo/sfk/cs/sfc/dis/disasterMsgList.jsp?menuSeq=603')
-                print("페이지 로딩 대기 중...")
-                time.sleep(5)
-                print("메시지 추출 시작...")
-                break
-            except Exception as e:
-                attempt += 1
-                print(f"페이지 접속 중 오류 발생 (시도 {attempt}/{max_attempts}): {e}")
-                if attempt >= max_attempts:
-                    print("재시도 횟수를 초과하여 재난문자 크롤링을 건너뜁니다.")
-                    return []
-                else:
-                    print("5초 후 다시 시도합니다...")
-                    time.sleep(5)
+        try:
+            print("웹페이지 접속 시도 중...")
+            self.driver.get('https://www.safekorea.or.kr/idsiSFK/neo/sfk/cs/sfc/dis/disasterMsgList.jsp?menuSeq=603')
+            print("페이지 로딩 대기 중...")
+            time.sleep(5)
+            print("메시지 추출 시작...")
 
-        disaster_messages = []
-        for i in range(10):
-            try:
-                raw_message_id = self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MD101_SN").text
+            disaster_messages = []
+            for i in range(10):
                 try:
-                    message_id = int(raw_message_id.strip())
-                except ValueError:
-                    message_id = 0
-
-                if message_id in self.seen_message_ids:
-                    continue
-                self.seen_message_ids.add(message_id)
-
-                disaster_type = self.driver.find_element(By.ID, f"disasterSms_tr_{i}_DSSTR_SE_NM").text
-                emergency_step = self.driver.find_element(By.ID, f"disasterSms_tr_{i}_EMRGNCY_STEP_NM").text
-                location = self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_LOC").text
-                raw_issued_at = self.driver.find_element(By.ID, f"disasterSms_tr_{i}_CREATE_DT").text
-                message_content = self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_CN").get_attribute("title")
-
-                try:
-                    issued_dt = datetime.strptime(raw_issued_at, "%Y-%m-%d %H:%M")
-                except ValueError:
+                    raw_message_id = self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MD101_SN").text
                     try:
-                        issued_dt = datetime.strptime(raw_issued_at, "%Y/%m/%d %H:%M:%S")
+                        message_id = int(raw_message_id.strip())
                     except ValueError:
-                        issued_dt = datetime.now()
+                        message_id = 0
 
-                disaster_messages.append({
-                    "message_id": message_id,
-                    "emergency_level": emergency_step,
-                    "DM_ntype": disaster_type,
-                    "DM_stype": "",
-                    "issuing_agency": location,
-                    "issued_at": issued_dt,
-                    "message_content": message_content
-                })
-                print(f"메시지 {i} 추출 성공: {message_id}")
-            except Exception as e:
-                print(f"인덱스 {i}에서 메시지 추출 중 오류 발생: {e}")
-                break
+                    if message_id in self.seen_message_ids:
+                        continue
+                    self.seen_message_ids.add(message_id)
 
-        return disaster_messages
+                    disaster_type = self.driver.find_element(By.ID, f"disasterSms_tr_{i}_DSSTR_SE_NM").text
+                    emergency_step = self.driver.find_element(By.ID, f"disasterSms_tr_{i}_EMRGNCY_STEP_NM").text
+                    location = self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_LOC").text
+                    raw_issued_at = self.driver.find_element(By.ID, f"disasterSms_tr_{i}_CREATE_DT").text
+                    message_content = self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_CN").get_attribute(
+                        "title")
+
+                    try:
+                        issued_dt = datetime.strptime(raw_issued_at, "%Y-%m-%d %H:%M")
+                    except ValueError:
+                        try:
+                            issued_dt = datetime.strptime(raw_issued_at, "%Y/%m/%d %H:%M:%S")
+                        except ValueError:
+                            issued_dt = datetime.now()
+
+                    disaster_messages.append({
+                        "message_id": message_id,
+                        "emergency_level": emergency_step,
+                        "DM_ntype": disaster_type,
+                        "DM_stype": "",
+                        "issuing_agency": location,
+                        "issued_at": issued_dt,
+                        "message_content": message_content
+                    })
+                    print(f"메시지 {i} 추출 성공: {message_id}")
+                except Exception as e:
+                    print(f"인덱스 {i}에서 메시지 추출 중 오류 발생: {e}")
+                    break
+
+            return disaster_messages
+        except Exception as e:
+            print(f"페이지 접속 중 오류 발생: {e}")
+            return []
 
     def monitor_disaster_messages(self):
         print("실시간 재난문자 모니터링을 시작합니다...")
         print("종료하려면 'q' 또는 'exit'를 입력하고, 저장 현황을 보려면 '1'을 입력하세요.")
         while True:
             try:
-                # 사용자 입력 체크
                 if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
                     user_input = sys.stdin.readline().strip().lower()
                     if user_input in ["q", "exit"]:
@@ -380,22 +370,17 @@ class DisasterMessageCrawler:
                         print("=================")
 
                 disaster_messages = self.check_disaster_messages()
-                if not disaster_messages:
-                    print("신규 재난 메시지가 없습니다.")
+                new_messages = []
+                for msg in disaster_messages:
+                    if not self.message_exists_in_db(msg['message_id']):
+                        new_messages.append(msg)
+                if new_messages:
+                    print("=== 신규 재난 메시지 (JSON 형식) ===")
+                    print(json.dumps(new_messages, ensure_ascii=False, indent=2, default=str))
+                    print("====================================")
+                    self.backup_to_db(new_messages)
                 else:
-                    # 중복 아닌 것만 DB 삽입
-                    new_messages = []
-                    for msg in disaster_messages:
-                        if not self.message_exists_in_db(msg['message_id']):
-                            new_messages.append(msg)
-
-                    if new_messages:
-                        print("=== 신규 재난 메시지 (JSON 형식) ===")
-                        print(json.dumps(new_messages, ensure_ascii=False, indent=2, default=str))
-                        print("====================================")
-                        self.backup_to_db(new_messages)
-                    else:
-                        print("신규 재난 메시지가 없습니다.")
+                    print("신규 재난 메시지가 없습니다.")
 
                 print("다음 확인까지 60초 대기 중... (종료: q/exit, 현황보기: 1)")
                 for i in range(60):
@@ -420,14 +405,17 @@ class DisasterMessageCrawler:
                 print("1분 후 다시 시도합니다...")
                 time.sleep(60)
 
+
 def main():
     try:
         print("프로그램 시작")
         air_inform_data = get_air_inform()
         air_grade_data = get_air_grade_all_regions()
         unified_air_output = {
-            "air_inform_data": air_inform_data["data"] if isinstance(air_inform_data, dict) and "data" in air_inform_data else air_inform_data,
-            "air_grade_data": air_grade_data["data"] if isinstance(air_grade_data, dict) and "data" in air_grade_data else air_grade_data
+            "air_inform_data": air_inform_data["data"] if isinstance(air_inform_data,
+                                                                     dict) and "data" in air_inform_data else air_inform_data,
+            "air_grade_data": air_grade_data["data"] if isinstance(air_grade_data,
+                                                                   dict) and "data" in air_grade_data else air_grade_data
         }
         print("=== Air API 데이터 (JSON 형식) ===")
         print(json.dumps(unified_air_output, ensure_ascii=False, indent=2))
@@ -442,6 +430,7 @@ def main():
         crawler.monitor_disaster_messages()
     except Exception as e:
         print(f"Disaster Message Monitoring 중 오류 발생: {e}")
+
 
 if __name__ == "__main__":
     main()
