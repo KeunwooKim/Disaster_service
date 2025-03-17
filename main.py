@@ -111,7 +111,7 @@ def get_air_inform():
         }
         filtered_data.append(extracted)
 
-        # 자연키 생성: 예보 날짜와 발표 시간 조합 (중복 방지)
+        # 자연키 생성: 예보 날짜와 발표 시간 조합
         record_id = f"{extracted['informData']}_{extracted['dataTime']}"
         try:
             dt_str = extracted["dataTime"].replace("시 발표", "").strip()
@@ -119,7 +119,6 @@ def get_air_inform():
         except Exception as e:
             logging.error(f"날짜 변환 실패 (airinform data_time): {e}")
             data_time = datetime.now()
-
         try:
             forecast_date = datetime.strptime(extracted["informData"], "%Y-%m-%d").date()
         except Exception as e:
@@ -152,7 +151,7 @@ def get_air_inform():
 
 
 # (2) 시도별 실시간 미세먼지 정보 (air_grade) API 호출 및 중복 없이 Cassandra 저장
-# 전국 데이터가 제대로 수집되지 않는 경우, 개별 지역 데이터를 반복 호출하여 처리합니다.
+# 전국 데이터 대신, 각 지역을 순회하여 데이터를 수집합니다.
 def get_air_grade_all_regions():
     regions = ["서울", "부산", "대구", "인천", "광주", "대전", "울산", "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주", "세종"]
     all_filtered_data = []
@@ -188,13 +187,12 @@ def get_air_grade_all_regions():
             }
             all_filtered_data.append(extracted)
 
-            # 자연키 생성: 지역 + 발표 시간
-            record_id = f"{extracted['sidoName']}_{extracted['dataTime']}"
+            # 자연키 생성: 지역 + 발표 시간 조합
+            record_key = f"{extracted['sidoName']}_{extracted['dataTime']}"
             dt_grade = None
             raw_time = extracted["dataTime"]
             korea_timezone = timezone(timedelta(hours=9))
             try:
-                # API가 "YYYY-MM-DD HH:MM" 형식으로 반환하므로 해당 형식 사용
                 dt_grade = datetime.strptime(raw_time, "%Y-%m-%d %H:%M") \
                     .replace(tzinfo=korea_timezone).astimezone(timezone.utc)
             except Exception as e:
@@ -215,18 +213,28 @@ def get_air_grade_all_regions():
 
             sido = extracted["sidoName"] if extracted["sidoName"] is not None else ""
 
+            # 중복 체크: 동일 지역, 동일 발표시간의 레코드가 이미 있는지 조회 (ALLOW FILTERING 사용)
+            check_query = SimpleStatement("""
+                SELECT count(*) FROM airgrade WHERE sidoName=%s AND data_time=%s ALLOW FILTERING
+            """)
+            result = connector.session.execute(check_query, (sido, dt_grade))
+            exists = result.one().count > 0
+            if exists:
+                print(f"{region}의 {raw_time} 데이터는 이미 저장되어 있습니다.")
+                continue
+
             insert_stmt = SimpleStatement("""
-                INSERT INTO airgrade (record_id, data_time, pm10_grade, pm25_grade, sido)
-                VALUES (%s, %s, %s, %s, %s) IF NOT EXISTS
+                INSERT INTO airgrade (pm_no, data_time, pm10_grade, pm25_grade, sido)
+                VALUES (%s, %s, %s, %s, %s)
             """)
             connector.session.execute(insert_stmt, (
-                record_id,
+                uuid4(),
                 dt_grade,
                 pm10_grade,
                 pm25_grade,
                 sido
             ))
-            print(f"Air Grade 데이터 저장 완료 for {region} - record_id: {record_id}")
+            print(f"Air Grade 데이터 저장 완료 for {region} - record_key: {record_key}")
     return {"status": "success", "data": all_filtered_data}
 
 
@@ -348,7 +356,6 @@ class DisasterMessageCrawler:
         print("종료하려면 'q' 또는 'exit'를 입력하고, 저장 현황을 보려면 '1'을 입력하세요.")
         while True:
             try:
-                # 사용자 입력 비동기 체크
                 if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
                     user_input = sys.stdin.readline().strip().lower()
                     if user_input in ["q", "exit"]:
