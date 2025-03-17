@@ -111,8 +111,8 @@ def get_air_inform():
         }
         filtered_data.append(extracted)
 
-        # 자연키 생성: 예보 날짜와 발표 시간 조합 (중복 방지)
-        record_id = f"{extracted['informData']}_{extracted['dataTime']}"
+        # 자연키 생성: 예보 날짜, 발표 시간, 그리고 예보 코드까지 포함하여 중복 방지
+        record_id = f"{extracted['informData']}_{extracted['dataTime']}_{extracted['informCode']}"
         try:
             dt_str = extracted["dataTime"].replace("시 발표", "").strip()
             data_time = datetime.strptime(dt_str, "%Y-%m-%d %H")
@@ -148,6 +148,7 @@ def get_air_inform():
         print(f"Air Inform 데이터 저장 완료 - record_id: {record_id}")
 
     return {"status": "success", "data": filtered_data}
+
 
 
 # (2) 시도별 실시간 미세먼지 정보 (air_grade) API 호출 및 중복 없이 Cassandra 저장
