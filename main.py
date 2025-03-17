@@ -150,9 +150,9 @@ def get_air_inform():
     return {"status": "success", "data": filtered_data}
 
 
-# (2) 시도별 실시간 미세먼지 정보 (air_grade) API 호출 및 대표 항목만 저장
+# (2) 시도별 실시간 미세먼지 정보 (air_grade) API 호출 및 중복 없이 Cassandra 저장
+# 중복 방지를 위해, 동일 지역(sido)과 발표시간(data_time)에 대해 먼저 조회 후, 없으면 INSERT
 def get_air_grade_all_regions():
-    # 저장할 지역 리스트 (각 지역의 대표 데이터만 필요)
     regions = ["서울", "부산", "대구", "인천", "광주", "대전", "울산",
                "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주", "세종"]
     all_filtered_data = []
@@ -236,8 +236,7 @@ def get_air_grade_all_regions():
         print(f"Air Grade 데이터 저장 완료 for {region} - record_key: {record_key}")
     return {"status": "success", "data": all_filtered_data}
 
-
-# 재난문자 크롤러 클래스 (이전 코드 유지)
+# 재난문자 크롤러 클래스 (출력 형식을 JSON으로 통일, 중복 확인은 message_id 기준)
 class DisasterMessageCrawler:
     def __init__(self):
         print("크롤러 초기화 중...")
@@ -298,7 +297,7 @@ class DisasterMessageCrawler:
     def check_disaster_messages(self):
         try:
             print("웹페이지 접속 시도 중...")
-            self.driver.get('https://www.safekorea.or.kr/idsiSFK/neo/sfk/cs/sfc/dis/disasterMsgList.jsp?menuSeq=603')
+            self.driver.get('https://www.safekorea.go.kr/idsiSFK/neo/sfk/cs/sfc/dis/disasterMsgList.jsp?menuSeq=603')
             print("페이지 로딩 대기 중...")
             time.sleep(5)
             print("메시지 추출 시작...")
