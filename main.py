@@ -3,6 +3,7 @@ import sys
 import time
 import json
 import logging
+import select
 import requests
 import xmltodict
 from datetime import datetime, timezone, timedelta
@@ -82,7 +83,6 @@ def get_air_inform():
     data_dict = xmltodict.parse(response.text)
     body = data_dict.get("response", {}).get("body", {})
 
-    # totalCount 확인: 0이면 데이터 없음 처리
     total_count = int(body.get("totalCount", "0"))
     if total_count == 0:
         print("Air Inform API: 해당 날짜에 데이터가 없습니다.")
@@ -96,7 +96,6 @@ def get_air_inform():
     if items is None:
         raise Exception("API 응답에 'item' 데이터가 없습니다. 응답 내용: " + response.text)
 
-    # item이 단일 객체인 경우 리스트로 변환
     if not isinstance(items, list):
         items = [items]
 
@@ -112,7 +111,6 @@ def get_air_inform():
         }
         filtered_data.append(extracted)
 
-        # INSERT into airinform 테이블
         aq_no = uuid4()
         try:
             dt_str = extracted["dataTime"].replace("시 발표", "").strip()
@@ -183,12 +181,10 @@ def get_air_grade():
         }
         filtered_data.append(extracted)
 
-        # INSERT into airgrade 테이블
         pm_no = uuid4()
         dt_grade = None
         raw_time = extracted["dataTime"]
         korea_timezone = timezone(timedelta(hours=9))
-        # 24:00인 경우 특별 처리: "24:"를 "00:"으로 변경 후 하루 추가
         if "24:" in raw_time:
             try:
                 new_time = raw_time.replace("24:", "00:")
@@ -283,7 +279,7 @@ class DisasterMessageCrawler:
     def setup_driver(self):
         try:
             print("웹 드라이버 설정 중...")
-            chrome_driver_path = '/usr/local/bin/chromedriver'
+            chrome_driver_path = '/Users/keunwookim/Documents/Python/DisasterGet/chromedriver-mac-arm64/chromedriver'
             chrome_options = Options()
             chrome_options.add_argument('--headless')
             chrome_options.add_argument('--no-sandbox')
@@ -355,8 +351,24 @@ class DisasterMessageCrawler:
 
     def monitor_disaster_messages(self):
         print("실시간 재난문자 모니터링을 시작합니다...")
+        print("종료하려면 'q' 또는 'exit'를 입력하고, 저장 현황을 보려면 '1'을 입력하세요.")
         while True:
             try:
+                # 비동기 입력 체크
+                if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
+                    user_input = sys.stdin.readline().strip().lower()
+                    if user_input in ["q", "exit"]:
+                        print("모니터링을 종료합니다.")
+                        break
+                    elif user_input == "1":
+                        print("=== 저장 현황 ===")
+                        for table in ["airinform", "airgrade", "disaster_message"]:
+                            query = f"SELECT count(*) FROM {table};"
+                            result = connector.session.execute(query)
+                            for row in result:
+                                print(f"{table} 테이블 레코드 수: {row.count}")
+                        print("=================")
+
                 disaster_messages = self.check_disaster_messages()
                 new_messages = []
                 for msg in disaster_messages:
@@ -364,14 +376,28 @@ class DisasterMessageCrawler:
                         new_messages.append(msg)
                 if new_messages:
                     print("=== 신규 재난 메시지 (JSON 형식) ===")
-                    # default=str 를 추가하여 datetime 객체를 문자열로 변환
                     print(json.dumps(new_messages, ensure_ascii=False, indent=2, default=str))
                     print("====================================")
                     self.backup_to_db(new_messages)
                 else:
                     print("신규 재난 메시지가 없습니다.")
-                print("다음 확인까지 60초 대기 중...")
-                time.sleep(60)
+
+                print("다음 확인까지 60초 대기 중... (종료: q/exit, 현황보기: 1)")
+                # 60초 동안 1초 단위로 사용자 입력을 체크
+                for i in range(60):
+                    if sys.stdin in select.select([sys.stdin], [], [], 1)[0]:
+                        user_input = sys.stdin.readline().strip().lower()
+                        if user_input in ["q", "exit"]:
+                            print("모니터링을 종료합니다.")
+                            return
+                        elif user_input == "1":
+                            print("=== 저장 현황 ===")
+                            for table in ["airinform", "airgrade", "disaster_message"]:
+                                query = f"SELECT count(*) FROM {table};"
+                                result = connector.session.execute(query)
+                                for row in result:
+                                    print(f"{table} 테이블 레코드 수: {row.count}")
+                            print("=================")
             except KeyboardInterrupt:
                 print("\n모니터링을 종료합니다.")
                 break
