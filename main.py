@@ -67,10 +67,13 @@ AIR_INFORM_API = "http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDus
 AIR_GRADE_API = "http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty"
 
 
+# (1) 대기질 예보통보 (airinform) API 호출 및 중복 없이 Cassandra 저장
 def get_air_inform():
     params = {
         "searchDate": datetime.now().strftime("%Y-%m-%d"),
         "returnType": "xml",
+        "numOfRows": "100",
+        "pageNo": "1",
         "serviceKey": API_KEY
     }
     try:
@@ -82,7 +85,6 @@ def get_air_inform():
 
     data_dict = xmltodict.parse(response.text)
     body = data_dict.get("response", {}).get("body", {})
-
     total_count = int(body.get("totalCount", "0"))
     if total_count == 0:
         print("Air Inform API: 해당 날짜에 데이터가 없습니다.")
@@ -91,11 +93,9 @@ def get_air_inform():
     items_section = body.get("items")
     if items_section is None:
         raise Exception("API 응답에 'items' 섹션이 없습니다. 응답 내용: " + response.text)
-
     items = items_section.get("item")
     if items is None:
         raise Exception("API 응답에 'item' 데이터가 없습니다. 응답 내용: " + response.text)
-
     if not isinstance(items, list):
         items = [items]
 
@@ -111,7 +111,8 @@ def get_air_inform():
         }
         filtered_data.append(extracted)
 
-        aq_no = uuid4()
+        # 자연키 생성: 예보 날짜와 발표 시간 조합 (중복 방지)
+        record_id = f"{extracted['informData']}_{extracted['dataTime']}"
         try:
             dt_str = extracted["dataTime"].replace("시 발표", "").strip()
             data_time = datetime.strptime(dt_str, "%Y-%m-%d %H")
@@ -132,11 +133,11 @@ def get_air_inform():
         overall = extracted["informOverall"] if extracted["informOverall"] is not None else ""
 
         insert_stmt = SimpleStatement("""
-            INSERT INTO airinform (aq_no, cause, code, data_time, forecast_date, grade, overall, search_date)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO airinform (record_id, cause, code, data_time, forecast_date, grade, overall, search_date)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s) IF NOT EXISTS
         """)
         connector.session.execute(insert_stmt, (
-            aq_no,
+            record_id,
             cause,
             code,
             data_time,
@@ -145,93 +146,91 @@ def get_air_inform():
             overall,
             search_date
         ))
-        print(f"Air Inform 데이터 저장 완료 - aq_no: {aq_no}")
+        print(f"Air Inform 데이터 저장 완료 - record_id: {record_id}")
 
     return {"status": "success", "data": filtered_data}
 
 
-def get_air_grade():
-    params = {
-        "sidoName": "전국",
-        "returnType": "xml",
-        "serviceKey": API_KEY,
-        "ver": "1.3"
-    }
-    try:
-        response = requests.get(AIR_GRADE_API, params=params, timeout=10)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Air Grade API 호출 실패: {e}")
-        raise Exception("Air Grade API 호출 실패")
-
-    data_dict = xmltodict.parse(response.text)
-    items = data_dict.get("response", {}).get("body", {}).get("items", {}).get("item")
-    if items is None:
-        raise Exception("API 응답에 'item' 데이터가 없습니다. 응답 내용: " + response.text)
-    if not isinstance(items, list):
-        items = [items]
-
-    filtered_data = []
-    for item in items:
-        extracted = {
-            "pm25Grade1h": item.get("pm25Grade1h"),
-            "pm10Grade1h": item.get("pm10Grade1h"),
-            "sidoName": item.get("sidoName"),
-            "dataTime": item.get("dataTime")
+# (2) 시도별 실시간 미세먼지 정보 (air_grade) API 호출 및 중복 없이 Cassandra 저장
+# 전국 데이터가 제대로 수집되지 않는 경우, 개별 지역 데이터를 반복 호출하여 처리합니다.
+def get_air_grade_all_regions():
+    regions = ["서울", "부산", "대구", "인천", "광주", "대전", "울산", "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주", "세종"]
+    all_filtered_data = []
+    for region in regions:
+        params = {
+            "sidoName": region,
+            "returnType": "xml",
+            "numOfRows": "100",
+            "pageNo": "1",
+            "serviceKey": API_KEY,
+            "ver": "1.0"
         }
-        filtered_data.append(extracted)
+        try:
+            response = requests.get(AIR_GRADE_API, params=params, timeout=10)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Air Grade API 호출 실패 for {region}: {e}")
+            continue
 
-        pm_no = uuid4()
-        dt_grade = None
-        raw_time = extracted["dataTime"]
-        korea_timezone = timezone(timedelta(hours=9))
-        if "24:" in raw_time:
+        data_dict = xmltodict.parse(response.text)
+        items = data_dict.get("response", {}).get("body", {}).get("items", {}).get("item")
+        if items is None:
+            logging.warning(f"API 응답에 'item' 데이터가 없습니다 for {region}. 응답 내용: {response.text}")
+            continue
+        if not isinstance(items, list):
+            items = [items]
+        for item in items:
+            extracted = {
+                "pm25Grade1h": item.get("pm25Grade1h"),
+                "pm10Grade1h": item.get("pm10Grade1h"),
+                "sidoName": item.get("sidoName"),
+                "dataTime": item.get("dataTime")
+            }
+            all_filtered_data.append(extracted)
+
+            # 자연키 생성: 지역 + 발표 시간
+            record_id = f"{extracted['sidoName']}_{extracted['dataTime']}"
+            dt_grade = None
+            raw_time = extracted["dataTime"]
+            korea_timezone = timezone(timedelta(hours=9))
             try:
-                new_time = raw_time.replace("24:", "00:")
-                dt = datetime.strptime(new_time, "%Y-%m-%d %H:%M")
-                dt += timedelta(days=1)
-                dt_grade = dt.replace(tzinfo=korea_timezone).astimezone(timezone.utc)
-            except Exception as e:
-                logging.error(f"날짜 변환 실패 (special 24: handling): {e}")
-                dt_grade = datetime.utcnow()
-        else:
-            try:
+                # API가 "YYYY-MM-DD HH:MM" 형식으로 반환하므로 해당 형식 사용
                 dt_grade = datetime.strptime(raw_time, "%Y-%m-%d %H:%M") \
                     .replace(tzinfo=korea_timezone).astimezone(timezone.utc)
             except Exception as e:
-                logging.error(f"날짜 변환 실패 (airgrade data_time): {e}")
+                logging.error(f"날짜 변환 실패 (airgrade data_time) for {region}: {e}")
                 dt_grade = datetime.utcnow()
 
-        try:
-            pm10_grade = int(extracted["pm10Grade1h"]) if extracted["pm10Grade1h"] not in (None, "") else 0
-        except Exception as e:
-            logging.error(f"pm10_grade 변환 실패: {e}")
-            pm10_grade = 0
+            try:
+                pm10_grade = int(extracted["pm10Grade1h"]) if extracted["pm10Grade1h"] not in (None, "") else 0
+            except Exception as e:
+                logging.error(f"pm10_grade 변환 실패 for {region}: {e}")
+                pm10_grade = 0
 
-        try:
-            pm25_grade = int(extracted["pm25Grade1h"]) if extracted["pm25Grade1h"] not in (None, "") else 0
-        except Exception as e:
-            logging.error(f"pm25_grade 변환 실패: {e}")
-            pm25_grade = 0
+            try:
+                pm25_grade = int(extracted["pm25Grade1h"]) if extracted["pm25Grade1h"] not in (None, "") else 0
+            except Exception as e:
+                logging.error(f"pm25_grade 변환 실패 for {region}: {e}")
+                pm25_grade = 0
 
-        sido = extracted["sidoName"] if extracted["sidoName"] is not None else ""
+            sido = extracted["sidoName"] if extracted["sidoName"] is not None else ""
 
-        insert_stmt = SimpleStatement("""
-            INSERT INTO airgrade (pm_no, data_time, pm10_grade, pm25_grade, sido)
-            VALUES (%s, %s, %s, %s, %s)
-        """)
-        connector.session.execute(insert_stmt, (
-            pm_no,
-            dt_grade,
-            pm10_grade,
-            pm25_grade,
-            sido
-        ))
-        print(f"Air Grade 데이터 저장 완료 - pm_no: {pm_no}")
+            insert_stmt = SimpleStatement("""
+                INSERT INTO airgrade (record_id, data_time, pm10_grade, pm25_grade, sido)
+                VALUES (%s, %s, %s, %s, %s) IF NOT EXISTS
+            """)
+            connector.session.execute(insert_stmt, (
+                record_id,
+                dt_grade,
+                pm10_grade,
+                pm25_grade,
+                sido
+            ))
+            print(f"Air Grade 데이터 저장 완료 for {region} - record_id: {record_id}")
+    return {"status": "success", "data": all_filtered_data}
 
-    return {"status": "success", "data": filtered_data}
 
-
+# 재난문자 크롤러 클래스 (출력 형식을 JSON으로 통일, 중복 확인은 message_id 기준)
 class DisasterMessageCrawler:
     def __init__(self):
         print("크롤러 초기화 중...")
@@ -349,6 +348,7 @@ class DisasterMessageCrawler:
         print("종료하려면 'q' 또는 'exit'를 입력하고, 저장 현황을 보려면 '1'을 입력하세요.")
         while True:
             try:
+                # 사용자 입력 비동기 체크
                 if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
                     user_input = sys.stdin.readline().strip().lower()
                     if user_input in ["q", "exit"]:
@@ -404,7 +404,7 @@ def main():
     try:
         print("프로그램 시작")
         air_inform_data = get_air_inform()
-        air_grade_data = get_air_grade()
+        air_grade_data = get_air_grade_all_regions()
         unified_air_output = {
             "air_inform_data": air_inform_data["data"] if isinstance(air_inform_data,
                                                                      dict) and "data" in air_inform_data else air_inform_data,
