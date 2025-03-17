@@ -132,7 +132,7 @@ def get_air_inform():
             logging.error(f"날짜 변환 실패 (airinform forecast_date): {e}")
             forecast_date = None
 
-        search_date = datetime.now().date()
+        search_date_val = datetime.now().date()
         cause = extracted["informCause"] if extracted["informCause"] is not None else ""
         code = extracted["informCode"] if extracted["informCode"] is not None else ""
         grade = extracted["informGrade"] if extracted["informGrade"] is not None else ""
@@ -150,98 +150,97 @@ def get_air_inform():
             forecast_date,
             grade,
             overall,
-            search_date
+            search_date_val
         ))
         print(f"Air Inform 데이터 저장 완료 - record_id: {record_id}")
 
     return {"status": "success", "data": filtered_data}
 
 
-# (2) 시도별 실시간 미세먼지 정보 (air_grade) API 호출 및 중복 없이 Cassandra 저장
-# 중복 방지를 위해, 동일 지역(sido)과 발표시간(data_time)에 대해 먼저 조회 후, 없으면 INSERT
-def get_air_grade_all_regions():
-    regions = ["서울", "부산", "대구", "인천", "광주", "대전", "울산",
-               "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주", "세종"]
+# (2) 전국 실시간 미세먼지 정보 (air_grade) API 호출 및 stationname 기준 중복 체크 후, 중복된 경우 업데이트, 신규인 경우 INSERT
+def get_air_grade():
+    params = {
+        "sidoName": "전국",
+        "returnType": "xml",
+        "serviceKey": API_KEY,
+        "numOfRows": "1000",
+        "pageNo": "1",
+        "ver": "1.3"  # 1시간 등급 불러오려면 1.3 이상 필요
+    }
+    try:
+        response = requests.get(AIR_GRADE_API, params=params, timeout=10)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        logging.error(f"전국 Air Grade API 호출 실패: {e}")
+        return {"status": "error", "data": []}
+
+    data_dict = xmltodict.parse(response.text)
+    items = data_dict.get("response", {}).get("body", {}).get("items", {}).get("item")
+    if items is None:
+        logging.warning("전국 데이터에 'item' 섹션이 없습니다.")
+        return {"status": "success", "data": []}
+    if isinstance(items, dict):
+        items = [items]
+
     all_filtered_data = []
-    for region in regions:
-        params = {
-            "sidoName": region,
-            "returnType": "xml",
-            "numOfRows": "100",
-            "pageNo": "1",
-            "serviceKey": API_KEY,
-            "ver": "1.0"
-        }
-        try:
-            response = requests.get(AIR_GRADE_API, params=params, timeout=10)
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Air Grade API 호출 실패 for {region}: {e}")
-            continue
+    korea_timezone = timezone(timedelta(hours=9))
 
-        data_dict = xmltodict.parse(response.text)
-        items = data_dict.get("response", {}).get("body", {}).get("items", {}).get("item")
-        if items is None:
-            logging.warning(f"API 응답에 'item' 데이터가 없습니다 for {region}. 응답 내용: {response.text}")
-            continue
-        if isinstance(items, dict):
-            items = [items]
-        # 각 지역 대표 데이터: 첫 번째 항목만 사용
-        representative = items[0]
-        all_filtered_data.append(representative)
-
-        record_key = f"{representative['sidoName']}_{representative['dataTime']}"
-        raw_time = representative["dataTime"]
-        korea_timezone = timezone(timedelta(hours=9))
+    for item in items:
+        all_filtered_data.append(item)
+        raw_time = item.get("dataTime")
         try:
             dt_grade = datetime.strptime(raw_time, "%Y-%m-%d %H:%M") \
                 .replace(tzinfo=korea_timezone).astimezone(timezone.utc)
         except Exception as e:
-            logging.error(f"날짜 변환 실패 (airgrade data_time) for {region}: {e}")
+            logging.error(f"날짜 변환 실패 (airgrade data_time) for station {item.get('stationName')}: {e}")
             dt_grade = datetime.utcnow()
 
-        # 만약 대표 데이터의 미세먼지 정보가 모두 null이면 해당 지역은 저장하지 않음
-        if representative.get("pm25Grade1h") is None and representative.get("pm10Grade1h") is None:
-            print(f"{region}의 {raw_time} 데이터는 미세먼지 정보가 없으므로 저장하지 않습니다.")
+        # 만약 대표 데이터의 미세먼지 정보가 모두 null이면 해당 항목은 저장하지 않음
+        if item.get("pm25Grade1h") is None and item.get("pm10Grade1h") is None:
+            print(f"{item.get('stationName')}의 {raw_time} 데이터는 미세먼지 정보가 없으므로 저장하지 않습니다.")
             continue
 
         try:
-            pm10_grade = int(representative.get("pm10Grade1h") or 0)
+            pm10_grade = int(item.get("pm10Grade1h") or 0)
         except Exception as e:
-            logging.error(f"pm10_grade 변환 실패 for {region}: {e}")
+            logging.error(f"pm10_grade 변환 실패 for station {item.get('stationName')}: {e}")
             pm10_grade = 0
 
         try:
-            pm25_grade = int(representative.get("pm25Grade1h") or 0)
+            pm25_grade = int(item.get("pm25Grade1h") or 0)
         except Exception as e:
-            logging.error(f"pm25_grade 변환 실패 for {region}: {e}")
+            logging.error(f"pm25_grade 변환 실패 for station {item.get('stationName')}: {e}")
             pm25_grade = 0
 
-        sido = representative["sidoName"] if representative["sidoName"] is not None else ""
+        station_name = item.get("stationName")
+        sido = item.get("sidoName") or ""
 
-        # 중복 체크: 동일 지역, 동일 발표시간 데이터가 있는지 DB 조회 (ALLOW FILTERING 사용)
+        # 중복 체크: stationname을 기준으로 기존 레코드 조회 (ALLOW FILTERING)
         check_query = SimpleStatement("""
-            SELECT count(*) FROM airgrade WHERE sido=%s AND data_time=%s ALLOW FILTERING
+            SELECT pm_no FROM airgrade WHERE stationname=%s ALLOW FILTERING
         """)
-        result = connector.session.execute(check_query, (sido, dt_grade))
-        exists = result.one().count > 0
-        if exists:
-            print(f"{region}의 {raw_time} 데이터는 이미 저장되어 있습니다.")
-            continue
+        result = connector.session.execute(check_query, (station_name,))
+        row = result.one()
+        if row:
+            # 기존 레코드가 있으면 업데이트 (pm_no를 기준으로)
+            update_stmt = SimpleStatement("""
+                UPDATE airgrade SET data_time=%s, pm10_grade=%s, pm25_grade=%s, sido=%s
+                WHERE pm_no=%s
+            """)
+            connector.session.execute(update_stmt, (dt_grade, pm10_grade, pm25_grade, sido, row.pm_no))
+            print(f"Air Grade 데이터 업데이트 완료 - stationName: {station_name}")
+        else:
+            # 신규 레코드 INSERT
+            insert_stmt = SimpleStatement("""
+                INSERT INTO airgrade (pm_no, data_time, pm10_grade, pm25_grade, sido, stationname)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """)
+            new_id = uuid4()
+            connector.session.execute(insert_stmt, (new_id, dt_grade, pm10_grade, pm25_grade, sido, station_name))
+            print(f"Air Grade 데이터 저장 완료 - stationName: {station_name}")
 
-        insert_stmt = SimpleStatement("""
-            INSERT INTO airgrade (pm_no, data_time, pm10_grade, pm25_grade, sido)
-            VALUES (%s, %s, %s, %s, %s) IF NOT EXISTS
-        """)
-        connector.session.execute(insert_stmt, (
-            uuid4(),
-            dt_grade,
-            pm10_grade,
-            pm25_grade,
-            sido
-        ))
-        print(f"Air Grade 데이터 저장 완료 for {region} - record_key: {record_key}")
     return {"status": "success", "data": all_filtered_data}
+
 
 # 재난문자 크롤러 클래스 (출력 형식을 JSON으로 통일, 중복 확인은 message_id 기준)
 class DisasterMessageCrawler:
@@ -416,7 +415,7 @@ def main():
     try:
         print("프로그램 시작")
         air_inform_data = get_air_inform()
-        air_grade_data = get_air_grade_all_regions()
+        air_grade_data = get_air_grade()
         unified_air_output = {
             "air_inform_data": air_inform_data["data"] if isinstance(air_inform_data,
                                                                      dict) and "data" in air_inform_data else air_inform_data,
