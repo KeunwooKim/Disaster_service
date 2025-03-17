@@ -156,9 +156,6 @@ def get_air_grade_all_regions():
     regions = ["서울", "부산", "대구", "인천", "광주", "대전", "울산",
                "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주", "세종"]
     all_filtered_data = []
-    # 중복 체크용 캐시: { (sido, data_time) : True }
-    existing_records = {}
-
     for region in regions:
         params = {
             "sidoName": region,
@@ -180,76 +177,64 @@ def get_air_grade_all_regions():
         if items is None:
             logging.warning(f"API 응답에 'item' 데이터가 없습니다 for {region}. 응답 내용: {response.text}")
             continue
-        if not isinstance(items, list):
+        if isinstance(items, dict):
             items = [items]
-        for item in items:
-            extracted = {
-                "pm25Grade1h": item.get("pm25Grade1h"),
-                "pm10Grade1h": item.get("pm10Grade1h"),
-                "sidoName": item.get("sidoName"),
-                "dataTime": item.get("dataTime")
-            }
-            all_filtered_data.append(extracted)
+        # 각 지역 대표 데이터: 첫 번째 항목만 사용
+        representative = items[0]
+        all_filtered_data.append(representative)
 
-            # 자연키 생성: 지역 + 발표 시간
-            record_key = (extracted["sidoName"], extracted["dataTime"])
-            # null 값이 모두 있는 경우 건너뛰기
-            if extracted["pm25Grade1h"] is None and extracted["pm10Grade1h"] is None:
-                print(f"{region}의 {extracted['dataTime']} 데이터: 미세먼지 정보가 없습니다. 건너뜁니다.")
-                continue
+        record_key = f"{representative['sidoName']}_{representative['dataTime']}"
+        raw_time = representative["dataTime"]
+        korea_timezone = timezone(timedelta(hours=9))
+        try:
+            dt_grade = datetime.strptime(raw_time, "%Y-%m-%d %H:%M") \
+                .replace(tzinfo=korea_timezone).astimezone(timezone.utc)
+        except Exception as e:
+            logging.error(f"날짜 변환 실패 (airgrade data_time) for {region}: {e}")
+            dt_grade = datetime.utcnow()
 
-            # 캐시에서 먼저 확인
-            if record_key in existing_records:
-                print(f"{region}의 {extracted['dataTime']} 데이터는 이미 저장되어 있습니다. (캐시)")
-                continue
-            else:
-                # DB 조회를 통해 캐시에 저장 (최초 1회만 조회)
-                check_query = SimpleStatement("""
-                    SELECT count(*) FROM airgrade WHERE sido=%s AND data_time=%s ALLOW FILTERING
-                """)
-                try:
-                    # 먼저 날짜 파싱
-                    korea_timezone = timezone(timedelta(hours=9))
-                    dt_grade = datetime.strptime(extracted["dataTime"], "%Y-%m-%d %H:%M") \
-                        .replace(tzinfo=korea_timezone).astimezone(timezone.utc)
-                except Exception as e:
-                    logging.error(f"날짜 변환 실패 (airgrade data_time) for {region}: {e}")
-                    dt_grade = datetime.utcnow()
-                result = connector.session.execute(check_query, (extracted["sidoName"], dt_grade))
-                exists = result.one().count > 0
-                existing_records[record_key] = exists
-                if exists:
-                    print(f"{region}의 {extracted['dataTime']} 데이터는 이미 저장되어 있습니다.")
-                    continue
+        # 만약 대표 데이터의 미세먼지 정보가 모두 null이면 해당 지역은 저장하지 않음
+        if representative.get("pm25Grade1h") is None and representative.get("pm10Grade1h") is None:
+            print(f"{region}의 {raw_time} 데이터는 미세먼지 정보가 없으므로 저장하지 않습니다.")
+            continue
 
-            try:
-                pm10_grade = int(extracted["pm10Grade1h"]) if extracted["pm10Grade1h"] not in (None, "") else 0
-            except Exception as e:
-                logging.error(f"pm10_grade 변환 실패 for {region}: {e}")
-                pm10_grade = 0
+        try:
+            pm10_grade = int(representative.get("pm10Grade1h") or 0)
+        except Exception as e:
+            logging.error(f"pm10_grade 변환 실패 for {region}: {e}")
+            pm10_grade = 0
 
-            try:
-                pm25_grade = int(extracted["pm25Grade1h"]) if extracted["pm25Grade1h"] not in (None, "") else 0
-            except Exception as e:
-                logging.error(f"pm25_grade 변환 실패 for {region}: {e}")
-                pm25_grade = 0
+        try:
+            pm25_grade = int(representative.get("pm25Grade1h") or 0)
+        except Exception as e:
+            logging.error(f"pm25_grade 변환 실패 for {region}: {e}")
+            pm25_grade = 0
 
-            sido = extracted["sidoName"] if extracted["sidoName"] is not None else ""
+        sido = representative["sidoName"] if representative["sidoName"] is not None else ""
 
-            insert_stmt = SimpleStatement("""
-                INSERT INTO airgrade (pm_no, data_time, pm10_grade, pm25_grade, sido)
-                VALUES (%s, %s, %s, %s, %s) IF NOT EXISTS
-            """)
-            connector.session.execute(insert_stmt, (
-                uuid4(),
-                dt_grade,
-                pm10_grade,
-                pm25_grade,
-                sido
-            ))
-            print(f"Air Grade 데이터 저장 완료 for {region} - record_key: {extracted['sidoName']}_{extracted['dataTime']}")
+        # 중복 체크: 동일 지역, 동일 발표시간 데이터가 있는지 DB 조회 (ALLOW FILTERING 사용)
+        check_query = SimpleStatement("""
+            SELECT count(*) FROM airgrade WHERE sido=%s AND data_time=%s ALLOW FILTERING
+        """)
+        result = connector.session.execute(check_query, (sido, dt_grade))
+        exists = result.one().count > 0
+        if exists:
+            print(f"{region}의 {raw_time} 데이터는 이미 저장되어 있습니다.")
+            continue
+
+        insert_stmt = SimpleStatement("""
+            INSERT INTO airgrade (pm_no, data_time, pm10_grade, pm25_grade, sido)
+            VALUES (%s, %s, %s, %s, %s) IF NOT EXISTS
+        """)
+        connector.session.execute(insert_stmt, (
+            uuid4(),
+            dt_grade,
+            pm10_grade,
+            pm25_grade,
+            sido
+        ))
+        print(f"Air Grade 데이터 저장 완료 for {region} - record_key: {record_key}")
     return {"status": "success", "data": all_filtered_data}
-
 
 # 재난문자 크롤러 클래스 (출력 형식을 JSON으로 통일, 중복 확인은 message_id 기준)
 class DisasterMessageCrawler:
