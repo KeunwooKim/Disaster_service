@@ -111,7 +111,7 @@ def get_air_inform():
         }
         filtered_data.append(extracted)
 
-        # 자연키 생성: 예보 날짜, 발표 시간, 그리고 예보 코드까지 포함하여 중복 방지
+        # 자연키 생성: 예보일자, 발표시간, 예보코드를 결합하여 고유키 생성
         record_id = f"{extracted['informData']}_{extracted['dataTime']}_{extracted['informCode']}"
         try:
             dt_str = extracted["dataTime"].replace("시 발표", "").strip()
@@ -148,6 +148,7 @@ def get_air_inform():
         print(f"Air Inform 데이터 저장 완료 - record_id: {record_id}")
 
     return {"status": "success", "data": filtered_data}
+
 
 
 
