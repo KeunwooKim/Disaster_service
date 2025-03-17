@@ -283,7 +283,7 @@ class DisasterMessageCrawler:
     def setup_driver(self):
         try:
             print("웹 드라이버 설정 중...")
-            chrome_driver_path = '/Users/keunwookim/Documents/Python/DisasterGet/chromedriver-mac-arm64/chromedriver'
+            chrome_driver_path = '/usr/local/bin/chromedriver'
             chrome_options = Options()
             chrome_options.add_argument('--headless')
             chrome_options.add_argument('--no-sandbox')
