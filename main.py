@@ -30,7 +30,7 @@ API_KEY = os.getenv(
 
 # Cassandra 연결을 관리하는 클래스
 class CassandraConnector:
-    def __init__(self, keyspace="disaster_db"):
+    def __init__(self, keyspace="disaster_service"):
         self.keyspace = keyspace
         self.cluster = None
         self.session = None
