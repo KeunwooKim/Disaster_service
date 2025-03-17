@@ -153,8 +153,12 @@ def get_air_inform():
 # (2) 시도별 실시간 미세먼지 정보 (air_grade) API 호출 및 중복 없이 Cassandra 저장
 # 중복 방지를 위해, 동일 지역(sido)과 발표시간(data_time)에 대해 먼저 조회 후, 없으면 INSERT
 def get_air_grade_all_regions():
-    regions = ["서울", "부산", "대구", "인천", "광주", "대전", "울산", "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주", "세종"]
+    regions = ["서울", "부산", "대구", "인천", "광주", "대전", "울산",
+               "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주", "세종"]
     all_filtered_data = []
+    # 중복 체크용 캐시: { (sido, data_time) : True }
+    existing_records = {}
+
     for region in regions:
         params = {
             "sidoName": region,
@@ -187,17 +191,36 @@ def get_air_grade_all_regions():
             }
             all_filtered_data.append(extracted)
 
-            # 자연키 생성: 지역 + 발표시간
-            record_key = f"{extracted['sidoName']}_{extracted['dataTime']}"
-            dt_grade = None
-            raw_time = extracted["dataTime"]
-            korea_timezone = timezone(timedelta(hours=9))
-            try:
-                dt_grade = datetime.strptime(raw_time, "%Y-%m-%d %H:%M") \
-                    .replace(tzinfo=korea_timezone).astimezone(timezone.utc)
-            except Exception as e:
-                logging.error(f"날짜 변환 실패 (airgrade data_time) for {region}: {e}")
-                dt_grade = datetime.utcnow()
+            # 자연키 생성: 지역 + 발표 시간
+            record_key = (extracted["sidoName"], extracted["dataTime"])
+            # null 값이 모두 있는 경우 건너뛰기
+            if extracted["pm25Grade1h"] is None and extracted["pm10Grade1h"] is None:
+                print(f"{region}의 {extracted['dataTime']} 데이터: 미세먼지 정보가 없습니다. 건너뜁니다.")
+                continue
+
+            # 캐시에서 먼저 확인
+            if record_key in existing_records:
+                print(f"{region}의 {extracted['dataTime']} 데이터는 이미 저장되어 있습니다. (캐시)")
+                continue
+            else:
+                # DB 조회를 통해 캐시에 저장 (최초 1회만 조회)
+                check_query = SimpleStatement("""
+                    SELECT count(*) FROM airgrade WHERE sido=%s AND data_time=%s ALLOW FILTERING
+                """)
+                try:
+                    # 먼저 날짜 파싱
+                    korea_timezone = timezone(timedelta(hours=9))
+                    dt_grade = datetime.strptime(extracted["dataTime"], "%Y-%m-%d %H:%M") \
+                        .replace(tzinfo=korea_timezone).astimezone(timezone.utc)
+                except Exception as e:
+                    logging.error(f"날짜 변환 실패 (airgrade data_time) for {region}: {e}")
+                    dt_grade = datetime.utcnow()
+                result = connector.session.execute(check_query, (extracted["sidoName"], dt_grade))
+                exists = result.one().count > 0
+                existing_records[record_key] = exists
+                if exists:
+                    print(f"{region}의 {extracted['dataTime']} 데이터는 이미 저장되어 있습니다.")
+                    continue
 
             try:
                 pm10_grade = int(extracted["pm10Grade1h"]) if extracted["pm10Grade1h"] not in (None, "") else 0
@@ -213,16 +236,6 @@ def get_air_grade_all_regions():
 
             sido = extracted["sidoName"] if extracted["sidoName"] is not None else ""
 
-            # 중복 체크: 동일 지역, 동일 발표시간 데이터가 존재하는지 확인 (ALLOW FILTERING 사용)
-            check_query = SimpleStatement("""
-                SELECT count(*) FROM airgrade WHERE sido=%s AND data_time=%s ALLOW FILTERING
-            """)
-            result = connector.session.execute(check_query, (sido, dt_grade))
-            exists = result.one().count > 0
-            if exists:
-                print(f"{region}의 {raw_time} 데이터는 이미 저장되어 있습니다.")
-                continue
-
             insert_stmt = SimpleStatement("""
                 INSERT INTO airgrade (pm_no, data_time, pm10_grade, pm25_grade, sido)
                 VALUES (%s, %s, %s, %s, %s) IF NOT EXISTS
@@ -234,7 +247,7 @@ def get_air_grade_all_regions():
                 pm25_grade,
                 sido
             ))
-            print(f"Air Grade 데이터 저장 완료 for {region} - record_key: {record_key}")
+            print(f"Air Grade 데이터 저장 완료 for {region} - record_key: {extracted['sidoName']}_{extracted['dataTime']}")
     return {"status": "success", "data": all_filtered_data}
 
 
