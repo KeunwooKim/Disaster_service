@@ -69,8 +69,15 @@ AIR_GRADE_API = "http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRl
 
 # (1) 대기질 예보통보 (airinform) API 호출 및 중복 없이 Cassandra 저장
 def get_air_inform():
+    # 현재 시간에 따라 searchDate 조정 (예: 오전 9시 이전이면 전날 날짜 사용)
+    now = datetime.now()
+    if now.hour < 9:
+        search_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    else:
+        search_date = now.strftime("%Y-%m-%d")
+
     params = {
-        "searchDate": datetime.now().strftime("%Y-%m-%d"),
+        "searchDate": search_date,
         "returnType": "xml",
         "numOfRows": "100",
         "pageNo": "1",
@@ -148,6 +155,7 @@ def get_air_inform():
         print(f"Air Inform 데이터 저장 완료 - record_id: {record_id}")
 
     return {"status": "success", "data": filtered_data}
+
 
 # (2) 시도별 실시간 미세먼지 정보 (air_grade) API 호출 및 중복 없이 Cassandra 저장
 # 중복 방지를 위해, 동일 지역(sido)과 발표시간(data_time)에 대해 먼저 조회 후, 없으면 INSERT
