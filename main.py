@@ -7,8 +7,8 @@ import select
 import requests
 import xmltodict
 from datetime import datetime, timezone, timedelta
-from dotenv import load_dotenv
 from uuid import uuid4
+from dotenv import load_dotenv
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -30,7 +30,7 @@ API_KEY = os.getenv(
 
 # Cassandra 연결을 관리하는 클래스
 class CassandraConnector:
-    def __init__(self, keyspace="disaster_service"):
+    def __init__(self, keyspace="disaster_db"):
         self.keyspace = keyspace
         self.cluster = None
         self.session = None
@@ -131,11 +131,11 @@ def get_air_inform():
         grade = extracted["informGrade"] if extracted["informGrade"] is not None else ""
         overall = extracted["informOverall"] if extracted["informOverall"] is not None else ""
 
-        insert_statement = SimpleStatement("""
+        insert_stmt = SimpleStatement("""
             INSERT INTO airinform (aq_no, cause, code, data_time, forecast_date, grade, overall, search_date)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """)
-        connector.session.execute(insert_statement, (
+        connector.session.execute(insert_stmt, (
             aq_no,
             cause,
             code,
@@ -254,7 +254,7 @@ class DisasterMessageCrawler:
             return
         try:
             for msg in messages_list:
-                insert_statement = SimpleStatement("""
+                query = SimpleStatement("""
                     INSERT INTO disaster_message (
                         message_id, emergency_level, DM_ntype, DM_stype,
                         issuing_agency, issued_at, message_content
@@ -262,7 +262,7 @@ class DisasterMessageCrawler:
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                     IF NOT EXISTS
                 """)
-                self.session.execute(insert_statement, (
+                self.session.execute(query, (
                     msg['message_id'],
                     msg['emergency_level'],
                     msg['DM_ntype'],
@@ -354,7 +354,7 @@ class DisasterMessageCrawler:
         print("종료하려면 'q' 또는 'exit'를 입력하고, 저장 현황을 보려면 '1'을 입력하세요.")
         while True:
             try:
-                # 비동기 입력 체크
+                # 사용자 입력 비동기 체크
                 if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
                     user_input = sys.stdin.readline().strip().lower()
                     if user_input in ["q", "exit"]:
@@ -383,7 +383,6 @@ class DisasterMessageCrawler:
                     print("신규 재난 메시지가 없습니다.")
 
                 print("다음 확인까지 60초 대기 중... (종료: q/exit, 현황보기: 1)")
-                # 60초 동안 1초 단위로 사용자 입력을 체크
                 for i in range(60):
                     if sys.stdin in select.select([sys.stdin], [], [], 1)[0]:
                         user_input = sys.stdin.readline().strip().lower()
