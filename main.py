@@ -364,7 +364,8 @@ class DisasterMessageCrawler:
                         new_messages.append(msg)
                 if new_messages:
                     print("=== 신규 재난 메시지 (JSON 형식) ===")
-                    print(json.dumps(new_messages, ensure_ascii=False, indent=2))
+                    # default=str 를 추가하여 datetime 객체를 문자열로 변환
+                    print(json.dumps(new_messages, ensure_ascii=False, indent=2, default=str))
                     print("====================================")
                     self.backup_to_db(new_messages)
                 else:
