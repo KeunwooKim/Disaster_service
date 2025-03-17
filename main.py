@@ -111,7 +111,7 @@ def get_air_inform():
         }
         filtered_data.append(extracted)
 
-        # 자연키 생성: 예보 날짜와 발표 시간 조합
+        # 자연키 생성: 예보 날짜와 발표 시간 조합 (중복 방지)
         record_id = f"{extracted['informData']}_{extracted['dataTime']}"
         try:
             dt_str = extracted["dataTime"].replace("시 발표", "").strip()
@@ -151,7 +151,7 @@ def get_air_inform():
 
 
 # (2) 시도별 실시간 미세먼지 정보 (air_grade) API 호출 및 중복 없이 Cassandra 저장
-# 전국 데이터 대신, 각 지역을 순회하여 데이터를 수집합니다.
+# 여러 지역을 순회하여 데이터를 수집합니다.
 def get_air_grade_all_regions():
     regions = ["서울", "부산", "대구", "인천", "광주", "대전", "울산", "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주", "세종"]
     all_filtered_data = []
@@ -187,7 +187,7 @@ def get_air_grade_all_regions():
             }
             all_filtered_data.append(extracted)
 
-            # 자연키 생성: 지역 + 발표 시간 조합
+            # 자연키 생성은 사용하지 않고, pm_no를 primary key로 생성
             record_key = f"{extracted['sidoName']}_{extracted['dataTime']}"
             dt_grade = None
             raw_time = extracted["dataTime"]
@@ -213,13 +213,12 @@ def get_air_grade_all_regions():
 
             sido = extracted["sidoName"] if extracted["sidoName"] is not None else ""
 
-            # 수정된 INSERT 쿼리: 컬럼 "sidoName"은 대소문자를 유지하기 위해 따옴표 사용
             insert_stmt = SimpleStatement("""
-                INSERT INTO airgrade (record_id, data_time, pm10_grade, pm25_grade, "sidoName")
+                INSERT INTO airgrade (pm_no, data_time, pm10_grade, pm25_grade, sido)
                 VALUES (%s, %s, %s, %s, %s) IF NOT EXISTS
             """)
             connector.session.execute(insert_stmt, (
-                record_key,
+                uuid4(),
                 dt_grade,
                 pm10_grade,
                 pm25_grade,
