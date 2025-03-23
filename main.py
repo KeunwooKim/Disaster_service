@@ -162,7 +162,7 @@ def get_air_grade():
 # 3. 지진 정보 수집 및 저장
 def fetch_earthquake_data():
     # 한국 시간 기준으로 현재 시각을 맞춤
-    korea_time = datetime.now(timezone(timedelta(hours=9)))
+    korea_time = datetime.now(timezone(timedelta(hours=9))) - timedelta(days=1)
     current_time = korea_time.strftime('%Y%m%d%H%M')
     url = f"https://apihub.kma.go.kr/api/typ01/url/eqk_now.php?tm={current_time}&disp=1&help=0&authKey={EQ_API_KEY}"
 
