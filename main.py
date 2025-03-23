@@ -192,7 +192,7 @@ def fetch_earthquake_data():
     # disp 및 help 파라미터를 변경하여 API에서 올바른 데이터를 받도록 함
     url = f"https://apihub.kma.go.kr/api/typ01/url/eqk_now.php?tm={current_time}&disp=0&help=1&authKey={EQ_API_KEY}"
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=15)
         response.raise_for_status()
         response.encoding = 'euc-kr'
         csv_data = csv.reader(StringIO(response.text))
@@ -224,7 +224,6 @@ def fetch_earthquake_data():
             continue
         tp = tokens[0]
         if tp != "3":
-            logging.info(f"API 호출된 지진 데이터 (tp != '3'): {row}")
             continue
 
         try:
