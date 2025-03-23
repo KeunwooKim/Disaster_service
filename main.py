@@ -250,7 +250,7 @@ class DisasterMessageCrawler:
         return messages
 
     def monitor(self):
-        print("\U0001f4e2 실시간 재난문자 수집 시작")
+        print("[실시간 재난문자 수집 시작]")
         print("명령어 안내:")
         print(" 1 → 저장 현황 보기")
         print(" 2 → 대기 예보 정보 수집")
@@ -264,7 +264,7 @@ class DisasterMessageCrawler:
                 if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
                     cmd = input().strip().lower()
                     if cmd in ["q", "exit"]:
-                        print("\u274c 모니터링 종료")
+                        print("[모니터링 종료]")
                         break
                     elif cmd == "1":
                         print("=== 저장 현황 ===")
@@ -274,40 +274,40 @@ class DisasterMessageCrawler:
                                 print(f"{table}: {row.count}건")
                         print("=================")
                     elif cmd == "2":
-                        print("\ud83c\udf2b 대기 예보 정보 수집 중...")
+                        print("[대기 예보 정보 수집 중...]")
                         get_air_inform()
-                        print("✅ 대기 예보 수집 완료")
+                        print("[대기 예보 수집 완료]")
                     elif cmd == "3":
-                        print("\ud83c\udf2b 실시간 미세먼지 수집 중...")
+                        print("[실시간 미세먼지 수집 중...]")
                         get_air_grade()
-                        print("✅ 미세먼지 수집 완료")
+                        print("[미세먼지 수집 완료]")
                     elif cmd == "4":
-                        print("\ud83c\udf0d 지진 정보 수집 중...")
+                        print("[지진 정보 수집 중...]")
                         fetch_earthquake_data()
-                        print("✅ 지진 정보 수집 완료")
+                        print("[지진 정보 수집 완료]")
                     elif cmd == "5":
-                        print("📦 전체 수집 중...")
+                        print("[전체 수집 중...]")
                         get_air_inform()
                         get_air_grade()
                         fetch_earthquake_data()
-                        print("✅ 전체 수집 완료")
+                        print("[전체 수집 완료]")
                     else:
-                        print("⚠️ 알 수 없는 명령입니다. 다시 입력해주세요.")
+                        print("[알 수 없는 명령입니다. 다시 입력해주세요.]")
 
                 # 기본 메시지 수집 루틴
                 messages = self.check_messages()
                 if messages:
-                    print("\ud83d\udce9 신규 메시지 발견")
+                    print("[신규 메시지 발견]")
                     print(json.dumps(messages, ensure_ascii=False, indent=2, default=str))
                     self.backup_messages(messages)
                 else:
-                    print("\ud83d\udd0d 신규 메시지 없음")
-                    print("⏳ 60초 대기 중... (명령어 입력 가능: 1~5, q 등)")
+                    print("[신규 메시지 없음]")
+                    print("[60초 대기 중... (명령어 입력 가능: 1~5, q 등)]")
                     for i in range(60):
                         if sys.stdin in select.select([sys.stdin], [], [], 1)[0]:
                             cmd = input().strip().lower()
                             if cmd in ["q", "exit"]:
-                                print("\u274c 모니터링 종료")
+                                print("[모니터링 종료]")
                                 return
                             elif cmd == "1":
                                 print("=== 저장 현황 ===")
@@ -317,27 +317,27 @@ class DisasterMessageCrawler:
                                         print(f"{table}: {row.count}건")
                                 print("=================")
                             elif cmd == "2":
-                                print("\ud83c\udf2b 대기 예보 수집 중...")
+                                print("[대기 예보 수집 중...]")
                                 get_air_inform()
-                                print("✅ 대기 예보 수집 완료")
+                                print("[대기 예보 수집 완료]")
                             elif cmd == "3":
-                                print("\ud83c\udf2b 미세먼지 수집 중...")
+                                print("[미세먼지 수집 중...]")
                                 get_air_grade()
-                                print("✅ 미세먼지 수집 완료")
+                                print("[미세먼지 수집 완료]")
                             elif cmd == "4":
-                                print("\ud83c\udf0d 지진 수집 중...")
+                                print("[지진 수집 중...]")
                                 fetch_earthquake_data()
-                                print("✅ 지진 수집 완료")
+                                print("[지진 수집 완료]")
                             elif cmd == "5":
-                                print("📦 전체 수집 중...")
+                                print("[전체 수집 중...]")
                                 get_air_inform()
                                 get_air_grade()
                                 fetch_earthquake_data()
-                                print("✅ 전체 수집 완료")
+                                print("[전체 수집 완료]")
                             else:
-                                print("⚠️ 알 수 없는 명령입니다.")
+                                print("[알 수 없는 명령입니다.]")
             except Exception as e:
-                print(f"⚠️ 오류 발생: {e}")
+                print(f"[오류 발생]: {e}")
                 time.sleep(60)
 
 
