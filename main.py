@@ -251,7 +251,14 @@ class DisasterMessageCrawler:
 
     def monitor(self):
         print("📢 실시간 재난문자 수집 시작")
-        print("명령어 입력: 종료(q/exit), 현황보기(1)")
+        print("명령어 안내:")
+        print(" 1 → 저장 현황 보기")
+        print(" 2 → 대기 예보 정보 수집")
+        print(" 3 → 실시간 미세먼지 수집")
+        print(" 4 → 지진 정보 수집")
+        print(" 5 → 전체 수집 (대기 예보 + 미세먼지 + 지진)")
+        print(" q 또는 exit → 종료")
+
         while True:
             try:
                 if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
@@ -259,6 +266,7 @@ class DisasterMessageCrawler:
                     if cmd in ["q", "exit"]:
                         print("❌ 모니터링 종료")
                         break
+
                     elif cmd == "1":
                         print("=== 저장 현황 ===")
                         for table in ["airinform", "airgrade", "domestic_earthquake", "disaster_message"]:
@@ -267,6 +275,34 @@ class DisasterMessageCrawler:
                                 print(f"{table}: {row.count}건")
                         print("=================")
 
+                    elif cmd == "2":
+                        print("🌫 대기 예보 정보 수집 중...")
+                        get_air_inform()
+                        print("✅ 대기 예보 수집 완료")
+
+                    elif cmd == "3":
+                        print("🌫 실시간 미세먼지 수집 중...")
+                        get_air_grade()
+                        print("✅ 미세먼지 수집 완료")
+
+                    elif cmd == "4":
+                        print("🌍 지진 정보 수집 중...")
+                        fetch_earthquake_data()
+                        print("✅ 지진 정보 수집 완료")
+
+                    elif cmd == "5":
+                        print("🌫 대기 예보 정보 수집 중...")
+                        get_air_inform()
+                        print("🌫 실시간 미세먼지 수집 중...")
+                        get_air_grade()
+                        print("🌍 지진 정보 수집 중...")
+                        fetch_earthquake_data()
+                        print("✅ 전체 수집 완료")
+
+                    else:
+                        print("⚠️ 알 수 없는 명령입니다. 다시 입력해주세요.")
+
+                # 기본 재난문자 모니터링 루프
                 messages = self.check_messages()
                 if messages:
                     print("📩 신규 메시지 발견")
@@ -275,6 +311,7 @@ class DisasterMessageCrawler:
                 else:
                     print("🔍 신규 메시지 없음")
                 time.sleep(60)
+
             except Exception as e:
                 print(f"⚠️ 오류 발생: {e}")
                 time.sleep(60)
