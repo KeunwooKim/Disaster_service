@@ -181,12 +181,15 @@ def get_air_grade():
     logging.info(f"실시간 대기질 등급 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 처리됨")
     return {"status": "success", "data": items}
 
-# 3. 지진 정보 수집 및 저장 (시간대 처리 수정)
+# 3. 지진 정보 수집 및 저장 (서버 시간을 KST로 보정하고, 파라미터 수정)
 def fetch_earthquake_data():
     logging.info("지진 정보 수집 시작")
-    korea_time = datetime.now(timezone(timedelta(hours=9)))
-    current_time = korea_time.strftime('%Y%m%d%H%M%S')
-    url = f"https://apihub.kma.go.kr/api/typ01/url/eqk_now.php?tm={current_time}&disp=1&help=0&authKey={EQ_API_KEY}"
+    # KST 타임존 지정
+    kst = timezone(timedelta(hours=9))
+    # 현재 시각을 KST 기준 'YYYYMMDDHHMMSS' 형식으로 가져옴
+    current_time = datetime.now(kst).strftime('%Y%m%d%H%M%S')
+    # disp 및 help 파라미터를 변경하여 API에서 올바른 데이터를 받도록 함
+    url = f"https://apihub.kma.go.kr/api/typ01/url/eqk_now.php?tm={current_time}&disp=0&help=1&authKey={EQ_API_KEY}"
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
@@ -198,19 +201,24 @@ def fetch_earthquake_data():
 
     total_rows = 0
     saved_count = 0
-    korea_tz = timezone(timedelta(hours=9))
     for row in csv_data:
         if not row or row[0] == "TP":
             continue
         total_rows += 1
         try:
+            # 국내 지진 데이터만 저장 (tp가 "3"인 경우)
             if row[0] != "3":
                 continue
-            dt = datetime.strptime(row[3][:14], "%Y%m%d%H%M%S").replace(tzinfo=korea_tz).astimezone(timezone.utc)
-            magnitude = float(row[5])
-            lat = float(row[6])
-            lon = float(row[7])
-            msg = f"[{row[8]}] 규모 {magnitude}, 진도: {row[9]}, 참고: {row[10]}"
+            # row[3]의 앞 14자리는 지진 발생 시각 (YYYYMMDDHHMMSS)
+            dt = datetime.strptime(row[3][:14], "%Y%m%d%H%M%S").replace(tzinfo=kst).astimezone(timezone.utc)
+            # CSV 샘플 데이터에 따르면, 필드 인덱스는 다음과 같음:
+            # row[0]: TP, row[1]: TM_FC, row[2]: SEQ, row[3]: TM_EQK.MSC, row[4]: MT, row[5]: LAT, row[6]: LON,
+            # row[7]: LOC, row[8]: INT, row[9]: REM, (row[10]: COR, ...)
+            magnitude = float(row[4])
+            lat = float(row[5])
+            lon = float(row[6])
+            location = row[7]
+            msg = f"[{row[8]}] 규모 {magnitude}, 진도: {row[9]}"
             insert_stmt = """
                 INSERT INTO domestic_earthquake (eq_no, eq_time, eq_lat, eq_lot, eq_mag, eq_msg)
                 VALUES (%s, %s, %s, %s, %s, %s)
