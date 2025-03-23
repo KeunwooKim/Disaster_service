@@ -323,6 +323,7 @@ class DisasterMessageCrawler:
         print(" 3 → 실시간 미세먼지 수집")
         print(" 4 → 지진 정보 수집")
         print(" 5 → 전체 수집 (대기 예보 + 미세먼지 + 지진)")
+        print(" ? → 명령어 도움말")
         print(" q 또는 exit → 종료")
 
         while True:
@@ -357,6 +358,15 @@ class DisasterMessageCrawler:
                         get_air_grade()
                         fetch_earthquake_data()
                         logging.info("전체 수집 완료")
+                    elif cmd == "?":
+                        print("명령어 안내:")
+                        print(" 1 → 저장 현황 보기")
+                        print(" 2 → 대기 예보 정보 수집")
+                        print(" 3 → 실시간 미세먼지 수집")
+                        print(" 4 → 지진 정보 수집")
+                        print(" 5 → 전체 수집 (대기 예보 + 미세먼지 + 지진)")
+                        print(" ? → 명령어 도움말")
+                        print(" q 또는 exit → 종료")
                     else:
                         print("알 수 없는 명령입니다. 다시 입력해주세요.")
                 messages = self.check_messages()
@@ -398,6 +408,15 @@ class DisasterMessageCrawler:
                                 get_air_grade()
                                 fetch_earthquake_data()
                                 logging.info("전체 수집 완료")
+                            elif cmd == "?":
+                                print("명령어 안내:")
+                                print(" 1 → 저장 현황 보기")
+                                print(" 2 → 대기 예보 정보 수집")
+                                print(" 3 → 실시간 미세먼지 수집")
+                                print(" 4 → 지진 정보 수집")
+                                print(" 5 → 전체 수집 (대기 예보 + 미세먼지 + 지진)")
+                                print(" ? → 명령어 도움말")
+                                print(" q 또는 exit → 종료")
                             else:
                                 print("알 수 없는 명령입니다.")
             except Exception as e:
