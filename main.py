@@ -181,7 +181,8 @@ def get_air_grade():
     logging.info(f"실시간 대기질 등급 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 처리됨")
     return {"status": "success", "data": items}
 
-# 3. 지진 정보 수집 및 저장 (최신 eq_time과 비교하여 중복 방지)
+import uuid  # uuid 모듈 추가
+
 def fetch_earthquake_data():
     logging.info("지진 정보 수집 시작")
     # KST 타임존 지정
@@ -199,7 +200,7 @@ def fetch_earthquake_data():
         logging.error(f"지진 API 오류: {e}")
         return
 
-    # 최신 eq_time 조회 (테이블 설계에 따라 클러스터링 키 eq_time 내림차순 정렬이 되어 있다고 가정)
+    # 최신 eq_time 조회 (가장 최신 이벤트가 이미 저장되어 있다면 그 시간보다 이전의 이벤트는 저장하지 않음)
     try:
         max_time_result = connector.session.execute("SELECT eq_time FROM domestic_earthquake LIMIT 1")
         max_time_row = max_time_result.one()
@@ -216,11 +217,11 @@ def fetch_earthquake_data():
             continue
         total_rows += 1
 
-        # CSV로 읽은 행을 하나의 문자열로 합친 후 whitespace로 분리하여 토큰을 추출합니다.
+        # CSV 행을 하나의 문자열로 합친 후 공백으로 분리하여 토큰 추출
         combined = " ".join(row)
         tokens = combined.strip().split()
         if len(tokens) < 7:
-            continue  # 충분한 필드가 없는 경우 건너뜁니다.
+            continue
         tp = tokens[0]
         if tp != "3":
             logging.info(f"API 호출된 지진 데이터 (tp != '3'): {row}")
@@ -230,7 +231,7 @@ def fetch_earthquake_data():
             # tokens[3]는 진앙시(년월일시분초) 정보입니다.
             tm_eqk = tokens[3]  # 예: '20250320162608.000'
             dt = datetime.strptime(tm_eqk[:14], "%Y%m%d%H%M%S").replace(tzinfo=kst).astimezone(timezone.utc)
-            # 최신 eq_time과 비교: 만약 새 이벤트가 이미 저장된 최신 eq_time과 같거나 이전이면 건너뜁니다.
+            # 최신 eq_time과 비교: 새 이벤트가 이미 저장된 최신 eq_time보다 이전이면 저장하지 않음.
             if latest_eq_time is not None and dt <= latest_eq_time:
                 logging.info(f"이미 저장된 최신 eq_time({latest_eq_time})보다 이전이므로 저장 안 함: {dt}")
                 continue
@@ -238,22 +239,23 @@ def fetch_earthquake_data():
             magnitude = float(tokens[4])
             lat_num = float(tokens[5])
             lon_num = float(tokens[6])
-            # 나머지 토큰은 진앙 위치 및 기타 정보로 사용합니다.
             location = " ".join(tokens[7:])
             msg = f"[{location}] 규모 {magnitude}"
-            # record_id는 이제 새 이벤트의 고유 특성으로 생성하지 않고,
-            # 최신 eq_time 비교로 중복 저장을 방지합니다.
+            # 결정적인 문자열 생성
+            record_str = f"{dt.strftime('%Y%m%d%H%M%S')}_{lat_num}_{lon_num}_{magnitude}"
+            # uuid.uuid5를 사용해 record_str을 기반으로 uuid 객체 생성
+            record_id = uuid.uuid5(uuid.NAMESPACE_DNS, record_str)
+            logging.info(f"생성된 record_id: {record_id} (type: {type(record_id)})")
             insert_stmt = """
                 INSERT INTO domestic_earthquake (eq_no, eq_time, eq_lat, eq_lot, eq_mag, eq_msg)
                 VALUES (%s, %s, %s, %s, %s, %s) IF NOT EXISTS
             """
-            # eq_no를 dt, lat, lon, magnitude 조합으로 결정적 값 생성
-            record_id = f"{dt.strftime('%Y%m%d%H%M%S')}_{lat_num}_{lon_num}_{magnitude}"
             connector.session.execute(SimpleStatement(insert_stmt), (record_id, dt, lat_num, lon_num, magnitude, msg))
             saved_count += 1
         except Exception as e:
             logging.error(f"지진 파싱 오류 (row: {row}): {e}")
     logging.info(f"지진 정보 저장 완료: 총 {total_rows} 행 중 {saved_count}건 저장됨")
+
 
 # 4. 재난문자 크롤러
 class DisasterMessageCrawler:
