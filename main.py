@@ -181,7 +181,7 @@ def get_air_grade():
     logging.info(f"실시간 대기질 등급 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 처리됨")
     return {"status": "success", "data": items}
 
-# 3. 지진 정보 수집 및 저장 (서버 시간을 KST로 보정 및 CSV 데이터 재파싱)
+# 3. 지진 정보 수집 및 저장 (서버 시간을 KST로 보정 및 중복 방지를 위해 고유 키 사용)
 def fetch_earthquake_data():
     logging.info("지진 정보 수집 시작")
     # KST 타임존 지정
@@ -202,13 +202,12 @@ def fetch_earthquake_data():
     total_rows = 0
     saved_count = 0
     for row in csv_data:
-        # 건너뛰기: 빈 행 또는 헤더 행
-        if not row or row[0].strip().startswith("TP"):
+        # 헤더나 주석 행은 건너뜁니다.
+        if not row or row[0].strip().startswith("#"):
             continue
         total_rows += 1
 
-        # CSV로 읽은 행은 첫 번째 필드에 여러 값이 포함되어 있을 수 있으므로
-        # 전체 행을 하나의 문자열로 합친 후 whitespace로 분리하여 개별 토큰을 추출합니다.
+        # CSV로 읽은 행을 하나의 문자열로 합친 후 whitespace로 분리하여 토큰을 추출합니다.
         combined = " ".join(row)
         tokens = combined.strip().split()
         if len(tokens) < 7:
@@ -219,26 +218,25 @@ def fetch_earthquake_data():
             continue
 
         try:
-            # tokens를 사용하여 각 필드를 추출합니다.
+            # tokens[3]는 진앙시(년월일시분초) 정보입니다.
             tm_eqk = tokens[3]  # 예: '20250320162608.000'
             dt = datetime.strptime(tm_eqk[:14], "%Y%m%d%H%M%S").replace(tzinfo=kst).astimezone(timezone.utc)
-            mt_value = tokens[4]
-            magnitude = float(mt_value)
-            lat_value = tokens[5]
-            lat_num = float(lat_value)
-            lon_value = tokens[6]
-            lon_num = float(lon_value)
-            # 나머지 토큰은 진앙 위치를 나타냅니다.
+            magnitude = float(tokens[4])
+            lat_num = float(tokens[5])
+            lon_num = float(tokens[6])
+            # 나머지 토큰은 진앙 위치 및 기타 정보로 사용합니다.
             location = " ".join(tokens[7:])
-            # 추가 정보: CSV의 두 번째, 세 번째 필드 (예: INT, REM)
-            intensity = row[1].strip() if len(row) > 1 else ""
-            remark = row[2].strip() if len(row) > 2 else ""
-            msg = f"[{intensity}] 규모 {magnitude}, 진도: {remark}"
+            # 예시로 intensity와 remark는 CSV 원본의 두 번째, 세 번째 필드가 아니라 tokens나 row의 특정 인덱스에서 가져올 수 있습니다.
+            # 여기서는 단순히 메시지를 location 정보와 결합합니다.
+            msg = f"[{location}] 규모 {magnitude}"
+            # 중복 방지를 위해 고유 키(record_id)를 생성합니다.
+            # (발생 시각, 위도, 경도, 규모를 조합)
+            record_id = f"{dt.strftime('%Y%m%d%H%M%S')}_{lat_num}_{lon_num}_{magnitude}"
             insert_stmt = """
                 INSERT INTO domestic_earthquake (eq_no, eq_time, eq_lat, eq_lot, eq_mag, eq_msg)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s) IF NOT EXISTS
             """
-            connector.session.execute(SimpleStatement(insert_stmt), (uuid4(), dt, lat_num, lon_num, magnitude, msg))
+            connector.session.execute(SimpleStatement(insert_stmt), (record_id, dt, lat_num, lon_num, magnitude, msg))
             saved_count += 1
         except Exception as e:
             logging.error(f"지진 파싱 오류 (row: {row}): {e}")
