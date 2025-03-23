@@ -202,11 +202,13 @@ def fetch_earthquake_data():
     total_rows = 0
     saved_count = 0
     for row in csv_data:
-        # 빈 행이거나 첫 번째 필드가 '#'로 시작하면 건너뜁니다.
-        if not row or row[0].strip().startswith("#"):
+        # 건너뛰기: 빈 행 또는 헤더 행
+        if not row or row[0].strip().startswith("TP"):
             continue
         total_rows += 1
-        # CSV로 읽은 행을 하나의 문자열로 합친 후 whitespace로 분리하여 토큰을 추출합니다.
+
+        # CSV로 읽은 행은 첫 번째 필드에 여러 값이 포함되어 있을 수 있으므로
+        # 전체 행을 하나의 문자열로 합친 후 whitespace로 분리하여 개별 토큰을 추출합니다.
         combined = " ".join(row)
         tokens = combined.strip().split()
         if len(tokens) < 7:
@@ -215,14 +217,20 @@ def fetch_earthquake_data():
         if tp != "3":
             logging.info(f"API 호출된 지진 데이터 (tp != '3'): {row}")
             continue
-        # tp가 "3"인 경우, 정상 처리 진행
+
         try:
+            # tokens를 사용하여 각 필드를 추출합니다.
             tm_eqk = tokens[3]  # 예: '20250320162608.000'
             dt = datetime.strptime(tm_eqk[:14], "%Y%m%d%H%M%S").replace(tzinfo=kst).astimezone(timezone.utc)
-            magnitude = float(tokens[4])
-            lat_num = float(tokens[5])
-            lon_num = float(tokens[6])
+            mt_value = tokens[4]
+            magnitude = float(mt_value)
+            lat_value = tokens[5]
+            lat_num = float(lat_value)
+            lon_value = tokens[6]
+            lon_num = float(lon_value)
+            # 나머지 토큰은 진앙 위치를 나타냅니다.
             location = " ".join(tokens[7:])
+            # 추가 정보: CSV의 두 번째, 세 번째 필드 (예: INT, REM)
             intensity = row[1].strip() if len(row) > 1 else ""
             remark = row[2].strip() if len(row) > 2 else ""
             msg = f"[{intensity}] 규모 {magnitude}, 진도: {remark}"
@@ -234,7 +242,7 @@ def fetch_earthquake_data():
             saved_count += 1
         except Exception as e:
             logging.error(f"지진 파싱 오류 (row: {row}): {e}")
-
+    logging.info(f"지진 정보 저장 완료: 총 {total_rows} 행 중 {saved_count}건 저장됨")
 
 # 4. 재난문자 크롤러
 class DisasterMessageCrawler:
