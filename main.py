@@ -202,19 +202,16 @@ def fetch_earthquake_data():
     total_rows = 0
     saved_count = 0
     for row in csv_data:
-        if not row or row[0] == "TP":
+        if not row or row[0].strip() == "TP":
             continue
         total_rows += 1
+        # row[0]의 공백을 제거하여 비교
+        if row[0].strip() != "3":
+            logging.info(f"API 호출된 지진 데이터 (tp != '3'): {row}")
+            continue
         try:
-            # 국내 지진 데이터만 저장 (tp가 "3"인 경우)
-            if row[0] != "3":
-                logging.info(f"API 호출된 지진 데이터 (tp != '3'): {row}")
-                continue
             # row[3]의 앞 14자리는 지진 발생 시각 (YYYYMMDDHHMMSS)
             dt = datetime.strptime(row[3][:14], "%Y%m%d%H%M%S").replace(tzinfo=kst).astimezone(timezone.utc)
-            # CSV 샘플 데이터에 따르면, 필드 인덱스는 다음과 같음:
-            # row[0]: TP, row[1]: TM_FC, row[2]: SEQ, row[3]: TM_EQK.MSC, row[4]: MT, row[5]: LAT, row[6]: LON,
-            # row[7]: LOC, row[8]: INT, row[9]: REM, (row[10]: COR, ...)
             magnitude = float(row[4])
             lat = float(row[5])
             lon = float(row[6])
