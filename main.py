@@ -181,7 +181,7 @@ def get_air_grade():
     logging.info(f"실시간 대기질 등급 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 처리됨")
     return {"status": "success", "data": items}
 
-# 3. 지진 정보 수집 및 저장 (서버 시간을 KST로 보정하고, 파라미터 수정)
+# 3. 지진 정보 수집 및 저장 (서버 시간을 KST로 보정 및 CSV 데이터 재파싱)
 def fetch_earthquake_data():
     logging.info("지진 정보 수집 시작")
     # KST 타임존 지정
@@ -202,26 +202,43 @@ def fetch_earthquake_data():
     total_rows = 0
     saved_count = 0
     for row in csv_data:
-        if not row or row[0].strip() == "TP":
+        # 건너뛰기: 빈 행 또는 헤더 행
+        if not row or row[0].strip().startswith("TP"):
             continue
         total_rows += 1
-        # row[0]의 공백을 제거하여 비교
-        if row[0].strip() != "3":
+
+        # CSV로 읽은 행은 첫 번째 필드에 여러 값이 포함되어 있을 수 있으므로
+        # 전체 행을 하나의 문자열로 합친 후 whitespace로 분리하여 개별 토큰을 추출합니다.
+        combined = " ".join(row)
+        tokens = combined.strip().split()
+        if len(tokens) < 7:
+            continue  # 충분한 필드가 없는 경우 건너뜁니다.
+        tp = tokens[0]
+        if tp != "3":
             logging.info(f"API 호출된 지진 데이터 (tp != '3'): {row}")
             continue
+
         try:
-            # row[3]의 앞 14자리는 지진 발생 시각 (YYYYMMDDHHMMSS)
-            dt = datetime.strptime(row[3][:14], "%Y%m%d%H%M%S").replace(tzinfo=kst).astimezone(timezone.utc)
-            magnitude = float(row[4])
-            lat = float(row[5])
-            lon = float(row[6])
-            location = row[7]
-            msg = f"[{row[8]}] 규모 {magnitude}, 진도: {row[9]}"
+            # tokens를 사용하여 각 필드를 추출합니다.
+            tm_eqk = tokens[3]  # 예: '20250320162608.000'
+            dt = datetime.strptime(tm_eqk[:14], "%Y%m%d%H%M%S").replace(tzinfo=kst).astimezone(timezone.utc)
+            mt_value = tokens[4]
+            magnitude = float(mt_value)
+            lat_value = tokens[5]
+            lat_num = float(lat_value)
+            lon_value = tokens[6]
+            lon_num = float(lon_value)
+            # 나머지 토큰은 진앙 위치를 나타냅니다.
+            location = " ".join(tokens[7:])
+            # 추가 정보: CSV의 두 번째, 세 번째 필드 (예: INT, REM)
+            intensity = row[1].strip() if len(row) > 1 else ""
+            remark = row[2].strip() if len(row) > 2 else ""
+            msg = f"[{intensity}] 규모 {magnitude}, 진도: {remark}"
             insert_stmt = """
                 INSERT INTO domestic_earthquake (eq_no, eq_time, eq_lat, eq_lot, eq_mag, eq_msg)
                 VALUES (%s, %s, %s, %s, %s, %s)
             """
-            connector.session.execute(SimpleStatement(insert_stmt), (uuid4(), dt, lat, lon, magnitude, msg))
+            connector.session.execute(SimpleStatement(insert_stmt), (uuid4(), dt, lat_num, lon_num, magnitude, msg))
             saved_count += 1
         except Exception as e:
             logging.error(f"지진 파싱 오류 (row: {row}): {e}")
