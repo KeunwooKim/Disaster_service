@@ -27,9 +27,9 @@ load_dotenv()
 API_KEY = os.getenv("API_KEY", "기본값")
 EQ_API_KEY = os.getenv("EQ_API_KEY", "F5Iz7aHpRUSSM-2h6ZVE2w")
 
-# 로깅 설정
+# 로깅 설정: INFO 레벨로 설정하여 요약 정보만 출력
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
@@ -72,25 +72,23 @@ def get_air_inform():
     try:
         response = requests.get("http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth", params=params, timeout=10)
         response.raise_for_status()
-        logging.debug("Air Inform API 호출 성공")
     except Exception as e:
-        logging.error(f"❌ Air Inform API 호출 실패: {e}")
+        logging.error(f"Air Inform API 호출 실패: {e}")
         return {"status": "error", "data": []}
 
     data_dict = xmltodict.parse(response.text)
     items = data_dict.get("response", {}).get("body", {}).get("items", {}).get("item", [])
     if not isinstance(items, list):
         items = [items]
-    logging.info(f"총 {len(items)}개의 레코드를 처리합니다.")
+    total_items = len(items)
+    saved_count = 0
 
-    result_data = []
-    for idx, item in enumerate(items):
+    for item in items:
         record_id = f"{item.get('informData')}_{item.get('dataTime')}_{item.get('informCode')}"
         try:
             data_time = datetime.strptime(item["dataTime"].replace("시 발표", "").strip(), "%Y-%m-%d %H")
             forecast_date = datetime.strptime(item["informData"], "%Y-%m-%d").date()
-        except Exception as ex:
-            logging.warning(f"날짜 파싱 오류 (record_id: {record_id}): {ex}")
+        except Exception:
             data_time = datetime.now()
             forecast_date = None
 
@@ -109,12 +107,11 @@ def get_air_inform():
                 item.get("informOverall", ""),
                 datetime.now().date()
             ))
-            logging.debug(f"[{idx+1}/{len(items)}] 저장 완료 - {record_id}")
+            saved_count += 1
         except Exception as e:
             logging.error(f"DB 저장 실패 (record_id: {record_id}): {e}")
-        result_data.append(item)
-    logging.info("대기질 예보 데이터 수집 완료")
-    return {"status": "success", "data": result_data}
+    logging.info(f"대기질 예보 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 저장됨")
+    return {"status": "success", "data": items}
 
 # 2. 실시간 대기질 등급 수집 및 저장
 def get_air_grade():
@@ -130,9 +127,8 @@ def get_air_grade():
     try:
         response = requests.get("http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty", params=params, timeout=10)
         response.raise_for_status()
-        logging.debug("Air Grade API 호출 성공")
     except Exception as e:
-        logging.error(f"❌ Air Grade API 실패: {e}")
+        logging.error(f"Air Grade API 실패: {e}")
         return {"status": "error", "data": []}
 
     data_dict = xmltodict.parse(response.text)
@@ -140,6 +136,8 @@ def get_air_grade():
     if isinstance(items, dict):
         items = [items]
 
+    total_items = len(items)
+    saved_count = 0
     korea_tz = timezone(timedelta(hours=9))
     for item in items:
         if item.get("pm10Grade1h") is None and item.get("pm25Grade1h") is None:
@@ -147,8 +145,7 @@ def get_air_grade():
 
         try:
             dt = datetime.strptime(item["dataTime"], "%Y-%m-%d %H:%M").replace(tzinfo=korea_tz).astimezone(timezone.utc)
-        except Exception as ex:
-            logging.warning(f"시간 파싱 오류: {ex}")
+        except Exception:
             dt = datetime.utcnow()
 
         station = item.get("stationName")
@@ -165,7 +162,7 @@ def get_air_grade():
                     item.get("sidoName", ""),
                     row.pm_no
                 ))
-                logging.debug(f"🔁 업데이트됨: {station}")
+                saved_count += 1
             except Exception as e:
                 logging.error(f"업데이트 실패 ({station}): {e}")
         else:
@@ -178,41 +175,37 @@ def get_air_grade():
                     item.get("sidoName", ""),
                     station
                 ))
-                logging.debug(f"✅ 삽입됨: {station}")
+                saved_count += 1
             except Exception as e:
                 logging.error(f"삽입 실패 ({station}): {e}")
-    logging.info("실시간 대기질 등급 데이터 수집 완료")
+    logging.info(f"실시간 대기질 등급 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 처리됨")
     return {"status": "success", "data": items}
 
 # 3. 지진 정보 수집 및 저장 (시간대 처리 수정)
 def fetch_earthquake_data():
     logging.info("지진 정보 수집 시작")
-    # airgrade와 유사하게 한국 시간 기준 현재 시각 사용 (초까지 포함)
     korea_time = datetime.now(timezone(timedelta(hours=9)))
     current_time = korea_time.strftime('%Y%m%d%H%M%S')
     url = f"https://apihub.kma.go.kr/api/typ01/url/eqk_now.php?tm={current_time}&disp=1&help=0&authKey={EQ_API_KEY}"
-    logging.debug(f"지진 API 호출 URL: {url}")
-
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         response.encoding = 'euc-kr'
         csv_data = csv.reader(StringIO(response.text))
-        logging.debug("지진 API 호출 성공")
     except Exception as e:
-        logging.error(f"❌ 지진 API 오류: {e}")
+        logging.error(f"지진 API 오류: {e}")
         return
 
+    total_rows = 0
+    saved_count = 0
     korea_tz = timezone(timedelta(hours=9))
-    row_count = 0
     for row in csv_data:
         if not row or row[0] == "TP":
             continue
-        row_count += 1
+        total_rows += 1
         try:
             if row[0] != "3":
                 continue
-            # row[3]의 앞 14자리를 이용하여 시간 변환 (YYYYMMDDHHMMSS)
             dt = datetime.strptime(row[3][:14], "%Y%m%d%H%M%S").replace(tzinfo=korea_tz).astimezone(timezone.utc)
             magnitude = float(row[5])
             lat = float(row[6])
@@ -223,10 +216,10 @@ def fetch_earthquake_data():
                 VALUES (%s, %s, %s, %s, %s, %s)
             """
             connector.session.execute(SimpleStatement(insert_stmt), (uuid4(), dt, lat, lon, magnitude, msg))
-            logging.debug(f"✅ 지진 저장: {dt} / {row[8]}")
+            saved_count += 1
         except Exception as e:
-            logging.error(f"⚠️ 지진 파싱 오류 (row: {row}): {e}")
-    logging.info(f"지진 정보 수집 완료. 처리한 행 수: {row_count}")
+            logging.error(f"지진 파싱 오류 (row: {row}): {e}")
+    logging.info(f"지진 정보 저장 완료: 총 {total_rows} 행 중 {saved_count}건 저장됨")
 
 # 4. 재난문자 크롤러
 class DisasterMessageCrawler:
@@ -257,7 +250,7 @@ class DisasterMessageCrawler:
                     msg['message_id'], msg['emergency_level'], msg['DM_ntype'], msg['DM_stype'],
                     msg['issuing_agency'], msg['issued_at'], msg['message_content']
                 ))
-                logging.debug(f"✅ 메시지 저장: {msg['message_id']}")
+                logging.info(f"메시지 저장됨: {msg['message_id']}")
             except Exception as e:
                 logging.error(f"메시지 저장 오류 ({msg['message_id']}): {e}")
 
@@ -282,13 +275,12 @@ class DisasterMessageCrawler:
                     ),
                     "message_content": self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_CN").get_attribute("title")
                 })
-            except Exception as e:
-                logging.debug(f"메시지 크롤링 중 오류 (index: {i}): {e}")
+            except Exception:
                 continue
         return messages
 
     def monitor(self):
-        logging.info("[실시간 재난문자 수집 시작]")
+        logging.info("실시간 재난문자 수집 시작")
         print("명령어 안내:")
         print(" 1 → 저장 현황 보기")
         print(" 2 → 대기 예보 정보 수집")
@@ -302,7 +294,7 @@ class DisasterMessageCrawler:
                 if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
                     cmd = input().strip().lower()
                     if cmd in ["q", "exit"]:
-                        logging.info("[모니터링 종료]")
+                        logging.info("모니터링 종료")
                         break
                     elif cmd == "1":
                         print("=== 저장 현황 ===")
@@ -312,39 +304,38 @@ class DisasterMessageCrawler:
                                 print(f"{table}: {row.count}건")
                         print("=================")
                     elif cmd == "2":
-                        logging.info("[대기 예보 정보 수집 중...]")
+                        logging.info("대기 예보 정보 수집 시작")
                         get_air_inform()
-                        logging.info("[대기 예보 수집 완료]")
+                        logging.info("대기 예보 수집 완료")
                     elif cmd == "3":
-                        logging.info("[실시간 미세먼지 수집 중...]")
+                        logging.info("실시간 미세먼지 수집 시작")
                         get_air_grade()
-                        logging.info("[미세먼지 수집 완료]")
+                        logging.info("미세먼지 수집 완료")
                     elif cmd == "4":
-                        logging.info("[지진 정보 수집 중...]")
+                        logging.info("지진 정보 수집 시작")
                         fetch_earthquake_data()
-                        logging.info("[지진 정보 수집 완료]")
+                        logging.info("지진 정보 수집 완료")
                     elif cmd == "5":
-                        logging.info("[전체 수집 중...]")
+                        logging.info("전체 수집 시작")
                         get_air_inform()
                         get_air_grade()
                         fetch_earthquake_data()
-                        logging.info("[전체 수집 완료]")
+                        logging.info("전체 수집 완료")
                     else:
-                        print("[알 수 없는 명령입니다. 다시 입력해주세요.]")
-
+                        print("알 수 없는 명령입니다. 다시 입력해주세요.")
                 messages = self.check_messages()
                 if messages:
-                    logging.info("[신규 메시지 발견]")
+                    logging.info("신규 메시지 발견")
                     print(json.dumps(messages, ensure_ascii=False, indent=2, default=str))
                     self.backup_messages(messages)
                 else:
-                    logging.info("[신규 메시지 없음]")
-                    print("[60초 대기 중... (명령어 입력 가능: 1~5, q 등)]")
+                    logging.info("신규 메시지 없음")
+                    print("60초 대기 중... (명령어 입력 가능: 1~5, q 등)")
                     for i in range(60):
                         if sys.stdin in select.select([sys.stdin], [], [], 1)[0]:
                             cmd = input().strip().lower()
                             if cmd in ["q", "exit"]:
-                                logging.info("[모니터링 종료]")
+                                logging.info("모니터링 종료")
                                 return
                             elif cmd == "1":
                                 print("=== 저장 현황 ===")
@@ -354,36 +345,35 @@ class DisasterMessageCrawler:
                                         print(f"{table}: {row.count}건")
                                 print("=================")
                             elif cmd == "2":
-                                logging.info("[대기 예보 수집 중...]")
+                                logging.info("대기 예보 수집 시작")
                                 get_air_inform()
-                                logging.info("[대기 예보 수집 완료]")
+                                logging.info("대기 예보 수집 완료")
                             elif cmd == "3":
-                                logging.info("[미세먼지 수집 중...]")
+                                logging.info("실시간 미세먼지 수집 시작")
                                 get_air_grade()
-                                logging.info("[미세먼지 수집 완료]")
+                                logging.info("미세먼지 수집 완료")
                             elif cmd == "4":
-                                logging.info("[지진 수집 중...]")
+                                logging.info("지진 정보 수집 시작")
                                 fetch_earthquake_data()
-                                logging.info("[지진 수집 완료]")
+                                logging.info("지진 정보 수집 완료")
                             elif cmd == "5":
-                                logging.info("[전체 수집 중...]")
+                                logging.info("전체 수집 시작")
                                 get_air_inform()
                                 get_air_grade()
                                 fetch_earthquake_data()
-                                logging.info("[전체 수집 완료]")
+                                logging.info("전체 수집 완료")
                             else:
-                                print("[알 수 없는 명령입니다.]")
+                                print("알 수 없는 명령입니다.")
             except Exception as e:
-                logging.error(f"[오류 발생]: {e}")
+                logging.error(f"오류 발생: {e}")
                 time.sleep(60)
 
-# 실행 메인
 def main():
-    logging.info("📦 데이터 수집 시작")
+    logging.info("데이터 수집 시작")
     get_air_inform()
     get_air_grade()
     fetch_earthquake_data()
-    logging.info("\n🛑 재난문자 수집 시작")
+    logging.info("재난문자 수집 시작")
     DisasterMessageCrawler().monitor()
 
 if __name__ == "__main__":
