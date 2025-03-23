@@ -208,6 +208,7 @@ def fetch_earthquake_data():
         try:
             # 국내 지진 데이터만 저장 (tp가 "3"인 경우)
             if row[0] != "3":
+                logging.info("국내 지진이 아닙니다.")
                 continue
             # row[3]의 앞 14자리는 지진 발생 시각 (YYYYMMDDHHMMSS)
             dt = datetime.strptime(row[3][:14], "%Y%m%d%H%M%S").replace(tzinfo=kst).astimezone(timezone.utc)
