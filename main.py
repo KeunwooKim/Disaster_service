@@ -72,6 +72,7 @@ def get_air_inform():
     try:
         response = requests.get("http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth", params=params, timeout=10)
         response.raise_for_status()
+        logging.info("대기질 예보 API 연결 확인")
     except Exception as e:
         logging.error(f"Air Inform API 호출 실패: {e}")
         return {"status": "error", "data": []}
@@ -127,6 +128,7 @@ def get_air_grade():
     try:
         response = requests.get("http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty", params=params, timeout=10)
         response.raise_for_status()
+        logging.info("실시간 미세먼지 API 연결 확인")
     except Exception as e:
         logging.error(f"Air Grade API 실패: {e}")
         return {"status": "error", "data": []}
@@ -193,6 +195,7 @@ def fetch_earthquake_data():
     try:
         response = requests.get(url, timeout=15)
         response.raise_for_status()
+        logging.info("지진 API 연결 확인")
         response.encoding = 'euc-kr'
         csv_data = csv.reader(StringIO(response.text))
     except Exception as e:
