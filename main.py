@@ -266,8 +266,8 @@ def fetch_typhoon_data():
     global last_forecast_time
 
     # 현재 날짜 (yyyyMMdd)
-    current_date = datetime.now().strftime('%Y%m%d')
-
+    kst = timezone(timedelta(hours=9))
+    current_date = datetime.now(kst).strftime('%Y%m%d')
     # API 호출 URL 및 파라미터 설정
     url = 'http://apis.data.go.kr/1360000/TyphoonInfoService/getTyphoonInfo'
     params = {
