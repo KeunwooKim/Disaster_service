@@ -24,7 +24,7 @@ from selenium.webdriver.chrome.service import Service
 
 # 환경 변수 로드
 load_dotenv()
-API_KEY = os.getenv("API_KEY", "기본값")
+API_KEY = os.getenv("API_KEY", "7dWUeNJAqaan8oJAs5CbDWKnWaJpLWoxd+lB97UDDRgFfSjfKD7ZGHxM+kRAoZqsga+WlheugBMS2q9WCSaUNg==")
 EQ_API_KEY = os.getenv("EQ_API_KEY", "F5Iz7aHpRUSSM-2h6ZVE2w")
 
 # 로깅 설정: INFO 레벨로 설정하여 요약 정보만 출력
