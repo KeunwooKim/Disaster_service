@@ -431,7 +431,7 @@ class DisasterMessageCrawler:
 
     def show_status(self):
         print("=== 저장 현황 ===")
-        for table in ["airinform", "airgrade", "domestic_earthquake", "disaster_message", "domestic_typhoon"]:
+        for table in ["airinform", "airgrade", "domestic_earthquake", "domestic_typhoon", "disaster_message"]:
             result = connector.session.execute(f"SELECT count(*) FROM {table};")
             for row in result:
                 print(f"{table}: {row.count}건")
@@ -460,8 +460,13 @@ class DisasterMessageCrawler:
             get_air_inform()
             get_air_grade()
             fetch_earthquake_data()
-            get_typhoon_data()  # 태풍 정보 추가
+            get_typhoon_data()
             logging.info("전체 수집 완료")
+        elif cmd == "6":
+            # ★ 태풍 정보만 단독으로 수집하는 명령어 추가
+            logging.info("태풍 정보 수집 시작")
+            get_typhoon_data()
+            logging.info("태풍 정보 수집 완료")
         elif cmd == "?":
             self.display_help()
         else:
@@ -475,6 +480,7 @@ class DisasterMessageCrawler:
         print(" 3 → 실시간 미세먼지 수집")
         print(" 4 → 지진 정보 수집")
         print(" 5 → 전체 수집 (대기 예보 + 미세먼지 + 지진 + 태풍)")
+        print(" 6 → 태풍 정보 수집")  # ★ 도움말에 태풍 명령 추가
         print(" ? → 명령어 도움말")
         print(" q 또는 exit → 종료")
 
@@ -499,7 +505,7 @@ class DisasterMessageCrawler:
                         self.backup_messages(messages)
                     else:
                         logging.info("신규 메시지 없음")
-                        print("60초 대기 중... (명령어 입력 가능: 1~5, q 등)")
+                        print("60초 대기 중... (명령어 입력 가능: 1~6, q 등)")
                     last_check_time = time.time()
                 time.sleep(1)
             except Exception as e:
