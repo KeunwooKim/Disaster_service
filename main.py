@@ -204,6 +204,9 @@ def fetch_earthquake_data():
         max_time_result = connector.session.execute("SELECT eq_time FROM domestic_earthquake LIMIT 1")
         max_time_row = max_time_result.one()
         latest_eq_time = max_time_row.eq_time if max_time_row is not None else None
+        # 만약 latest_eq_time이 naive라면 UTC 타임존을 부여
+        if latest_eq_time is not None and latest_eq_time.tzinfo is None:
+            latest_eq_time = latest_eq_time.replace(tzinfo=timezone.utc)
     except Exception as e:
         logging.error(f"지진 데이터 최신 eq_time 조회 오류: {e}")
         latest_eq_time = None
