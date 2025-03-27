@@ -154,13 +154,16 @@ def get_air_grade():
         check_query = "SELECT pm_no FROM airgrade WHERE stationname=%s ALLOW FILTERING"
         result = connector.session.execute(SimpleStatement(check_query), (station,))
         row = result.one()
+        # 안전한 정수 변환을 위해 None일 경우 0으로 처리
+        pm10_grade = int(item.get("pm10Grade1h") or 0)
+        pm25_grade = int(item.get("pm25Grade1h") or 0)
         if row:
             update = "UPDATE airgrade SET data_time=%s, pm10_grade=%s, pm25_grade=%s, sido=%s WHERE pm_no=%s"
             try:
                 connector.session.execute(SimpleStatement(update), (
                     dt,
-                    int(item.get("pm10Grade1h", 0)),
-                    int(item.get("pm25Grade1h", 0)),
+                    pm10_grade,
+                    pm25_grade,
                     item.get("sidoName", ""),
                     row.pm_no
                 ))
@@ -172,8 +175,8 @@ def get_air_grade():
             try:
                 connector.session.execute(SimpleStatement(insert), (
                     uuid4(), dt,
-                    int(item.get("pm10Grade1h", 0)),
-                    int(item.get("pm25Grade1h", 0)),
+                    pm10_grade,
+                    pm25_grade,
                     item.get("sidoName", ""),
                     station
                 ))
