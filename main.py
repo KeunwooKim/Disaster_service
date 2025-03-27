@@ -7,6 +7,7 @@ import logging
 import select
 import requests
 import xmltodict
+import xml.etree.ElementTree as ET
 from io import StringIO
 from uuid import uuid4, uuid5, NAMESPACE_DNS
 from datetime import datetime, timezone, timedelta
@@ -27,7 +28,7 @@ load_dotenv()
 API_KEY = os.getenv("API_KEY", "7dWUeNJAqaan8oJAs5CbDWKnWaJpLWoxd+lB97UDDRgFfSjfKD7ZGHxM+kRAoZqsga+WlheugBMS2q9WCSaUNg==")
 EQ_API_KEY = os.getenv("EQ_API_KEY", "F5Iz7aHpRUSSM-2h6ZVE2w")
 
-# 로깅 설정: INFO 레벨로 설정하여 요약 정보만 출력
+# 로깅 설정
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -154,7 +155,6 @@ def get_air_grade():
         check_query = "SELECT pm_no FROM airgrade WHERE stationname=%s ALLOW FILTERING"
         result = connector.session.execute(SimpleStatement(check_query), (station,))
         row = result.one()
-        # 안전한 정수 변환을 위해 None일 경우 0으로 처리
         pm10_grade = int(item.get("pm10Grade1h") or 0)
         pm25_grade = int(item.get("pm25Grade1h") or 0)
         if row:
@@ -189,11 +189,8 @@ def get_air_grade():
 # 3. 지진 정보 수집 및 저장 (최신 eq_time과 비교하여 중복 방지)
 def fetch_earthquake_data():
     logging.info("지진 정보 수집 시작")
-    # KST 타임존 지정
     kst = timezone(timedelta(hours=9))
-    # 현재 시각을 KST 기준 'YYYYMMDDHHMMSS' 형식으로 가져옴
     current_time = datetime.now(kst).strftime('%Y%m%d%H%M%S')
-    # disp 및 help 파라미터를 변경하여 API에서 올바른 데이터를 받도록 함
     url = f"https://apihub.kma.go.kr/api/typ01/url/eqk_now.php?tm={current_time}&disp=0&help=1&authKey={EQ_API_KEY}"
     try:
         response = requests.get(url, timeout=15)
@@ -205,12 +202,10 @@ def fetch_earthquake_data():
         logging.error(f"지진 API 오류: {e}")
         return
 
-    # 최신 eq_time 조회 (테이블에서 eq_time이 클러스터링 키로 내림차순 정렬되어 있다고 가정)
     try:
         max_time_result = connector.session.execute("SELECT eq_time FROM domestic_earthquake LIMIT 1")
         max_time_row = max_time_result.one()
         latest_eq_time = max_time_row.eq_time if max_time_row is not None else None
-        # 만약 latest_eq_time이 naive라면 UTC 타임존을 부여
         if latest_eq_time is not None and latest_eq_time.tzinfo is None:
             latest_eq_time = latest_eq_time.replace(tzinfo=timezone.utc)
     except Exception as e:
@@ -220,12 +215,10 @@ def fetch_earthquake_data():
     total_rows = 0
     saved_count = 0
     for row in csv_data:
-        # 헤더나 주석 행은 건너뜁니다.
         if not row or row[0].strip().startswith("#"):
             continue
         total_rows += 1
 
-        # CSV 행을 하나의 문자열로 합친 후 공백으로 분리하여 토큰 추출
         combined = " ".join(row)
         tokens = combined.strip().split()
         if len(tokens) < 7:
@@ -235,9 +228,8 @@ def fetch_earthquake_data():
             continue
 
         try:
-            tm_eqk = tokens[3]  # 예: '20250320162608.000'
+            tm_eqk = tokens[3]
             dt = datetime.strptime(tm_eqk[:14], "%Y%m%d%H%M%S").replace(tzinfo=kst).astimezone(timezone.utc)
-            # 최신 eq_time과 비교
             if latest_eq_time is not None and dt <= latest_eq_time:
                 logging.info(f"이미 저장된 최신 eq_time({latest_eq_time})보다 이전이므로 저장 안 함: {dt}")
                 continue
@@ -247,7 +239,6 @@ def fetch_earthquake_data():
             lon_num = float(tokens[6])
             location = " ".join(tokens[7:])
             msg = f"[{location}] 규모 {magnitude}"
-            # 결정적인 문자열을 기반으로 uuid.uuid5()로 고유 UUID 생성
             record_str = f"{dt.strftime('%Y%m%d%H%M%S')}_{lat_num}_{lon_num}_{magnitude}"
             record_id = uuid5(NAMESPACE_DNS, record_str)
             logging.info(f"생성된 record_id: {record_id} (type: {type(record_id)})")
@@ -261,7 +252,151 @@ def fetch_earthquake_data():
             logging.error(f"지진 파싱 오류 (row: {row}): {e}")
     logging.info(f"지진 정보 저장 완료: 총 {total_rows} 행 중 {saved_count}건 저장됨")
 
-# 4. 재난문자 크롤러
+# ----------------------------------------------------
+# 4. 태풍 데이터 (추가)
+# ----------------------------------------------------
+TYPHOON_CODE = 31
+last_forecast_time = None  # 간단 예시로 전역 변수 사용
+
+def fetch_typhoon_data():
+    """
+    기상청 태풍정보조회서비스(getTyphoonInfo) API를 호출하여
+    태풍 정보를 파싱 후 리스트 형태로 반환한다.
+    """
+    global last_forecast_time
+
+    # 현재 날짜 (yyyyMMdd)
+    current_date = datetime.now().strftime('%Y%m%d')
+
+    # API 호출 URL 및 파라미터 설정
+    url = 'http://apis.data.go.kr/1360000/TyphoonInfoService/getTyphoonInfo'
+    params = {
+        'serviceKey': 'D0I8CLciGzwIaBmM6g6XitlVfgkLBO83zDl4EnUUoxifvRlSZHu78BqoixtzJg17Gb06up+NHzPXjN0cA7sLOg==',
+        'pageNo': '1',
+        'numOfRows': '10',
+        'dataType': 'XML',
+        'fromTmFc': current_date,
+        'toTmFc': current_date
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+    except Exception as e:
+        logging.error(f"태풍 API 호출 실패: {e}")
+        return []
+
+    # XML 파싱
+    root = ET.fromstring(response.content)
+    items = root.findall('.//item')
+    if not items:
+        logging.info("태풍 데이터가 없습니다.")
+        return []
+
+    typhoon_data = []
+    for item in items:
+        forecast_time = item.findtext('tmFc')  # 예보 시각 (예: 202503201600)
+        if not forecast_time:
+            continue
+
+        # 간단 중복 예시: 이전에 처리한 예보 시각이면 스킵
+        if forecast_time == last_forecast_time:
+            continue
+
+        # KST -> UTC 변환
+        korea_timezone = timezone(timedelta(hours=9))
+        formatted_forecast_time = datetime.strptime(forecast_time, "%Y%m%d%H%M")
+        formatted_forecast_time = formatted_forecast_time.replace(tzinfo=korea_timezone).astimezone(timezone.utc)
+
+        # 태풍 정보 추출 (필드명은 실제 API 응답에 맞춰 조정하세요)
+        name = item.findtext('typName')         # 태풍 이름
+        direction = item.findtext('typDir')     # 진행 방향
+        lat_str = item.findtext('typLat')       # 위도
+        lon_str = item.findtext('typLon')       # 경도
+        loc = item.findtext('typLoc')           # 위치
+        intensity = item.findtext('typInt')     # 강도 (예: "중", "강", "매우강")
+        wind_str = item.findtext('typ15')       # 강풍 반경(15m/s)
+
+        try:
+            lat = float(lat_str) if lat_str else 0.0
+        except:
+            lat = 0.0
+        try:
+            lon = float(lon_str) if lon_str else 0.0
+        except:
+            lon = 0.0
+        try:
+            wind_radius = int(wind_str) if wind_str else 0
+        except:
+            wind_radius = 0
+
+        typhoon_data.append({
+            "forecast_time": formatted_forecast_time,
+            "typ_name": name or "",
+            "typ_dir": direction or "",
+            "typ_lat": lat,
+            "typ_lon": lon,
+            "typ_location": loc or "",
+            "intensity": intensity or "",
+            "wind_radius": wind_radius
+        })
+
+        # 마지막 예보 시각 갱신
+        last_forecast_time = forecast_time
+
+    return typhoon_data
+
+def get_typhoon_data():
+    """
+    fetch_typhoon_data()로부터 태풍 정보를 가져와
+    domestic_typhoon 테이블에 저장한다.
+    """
+    logging.info("태풍 정보 수집 시작")
+    data = fetch_typhoon_data()
+    if not data:
+        logging.info("새로운 태풍 정보가 없습니다.")
+        return
+
+    saved_count = 0
+    for item in data:
+        # 중복 방지를 위해 uuid5를 사용 (태풍명+시간+위도+경도 등)
+        unique_str = f"{item['forecast_time'].strftime('%Y%m%d%H%M')}_{item['typ_name']}_{item['typ_lat']}_{item['typ_lon']}"
+        typ_no = uuid5(NAMESPACE_DNS, unique_str)
+
+        insert_query = """
+        INSERT INTO domestic_typhoon (
+            typ_no,
+            forecast_time,
+            typ_name,
+            typ_dir,
+            typ_lat,
+            typ_lon,
+            typ_location,
+            intensity,
+            wind_radius
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        IF NOT EXISTS
+        """
+        try:
+            connector.session.execute(SimpleStatement(insert_query), (
+                typ_no,
+                item['forecast_time'],
+                item['typ_name'],
+                item['typ_dir'],
+                item['typ_lat'],
+                item['typ_lon'],
+                item['typ_location'],
+                item['intensity'],
+                item['wind_radius']
+            ))
+            saved_count += 1
+        except Exception as e:
+            logging.error(f"태풍 정보 저장 실패: {e}")
+
+    logging.info(f"태풍 정보 저장 완료: 총 {len(data)}건 중 {saved_count}건 저장됨")
+
+# 5. 재난문자 크롤러
 class DisasterMessageCrawler:
     def __init__(self):
         chrome_driver_path = '/usr/local/bin/chromedriver'
@@ -296,7 +431,7 @@ class DisasterMessageCrawler:
 
     def show_status(self):
         print("=== 저장 현황 ===")
-        for table in ["airinform", "airgrade", "domestic_earthquake", "disaster_message"]:
+        for table in ["airinform", "airgrade", "domestic_earthquake", "disaster_message", "domestic_typhoon"]:
             result = connector.session.execute(f"SELECT count(*) FROM {table};")
             for row in result:
                 print(f"{table}: {row.count}건")
@@ -325,6 +460,7 @@ class DisasterMessageCrawler:
             get_air_inform()
             get_air_grade()
             fetch_earthquake_data()
+            get_typhoon_data()  # 태풍 정보 추가
             logging.info("전체 수집 완료")
         elif cmd == "?":
             self.display_help()
@@ -338,7 +474,7 @@ class DisasterMessageCrawler:
         print(" 2 → 대기 예보 정보 수집")
         print(" 3 → 실시간 미세먼지 수집")
         print(" 4 → 지진 정보 수집")
-        print(" 5 → 전체 수집 (대기 예보 + 미세먼지 + 지진)")
+        print(" 5 → 전체 수집 (대기 예보 + 미세먼지 + 지진 + 태풍)")
         print(" ? → 명령어 도움말")
         print(" q 또는 exit → 종료")
 
@@ -388,7 +524,7 @@ class DisasterMessageCrawler:
                     "issuing_agency": self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_LOC").text,
                     "issued_at": datetime.strptime(
                         self.driver.find_element(By.ID, f"disasterSms_tr_{i}_CREATE_DT").text,
-                        "%Y/%m/%d %H:%M:%S"  # HTML 형식에 맞게 수정
+                        "%Y/%m/%d %H:%M:%S"
                     ),
                     "message_content": self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_CN").get_attribute("title")
                 })
@@ -399,9 +535,16 @@ class DisasterMessageCrawler:
 
 def main():
     logging.info("데이터 수집 시작")
+
+    # 1. 대기 예보
     get_air_inform()
+    # 2. 실시간 미세먼지
     get_air_grade()
+    # 3. 지진 정보
     fetch_earthquake_data()
+    # 4. 태풍 정보
+    get_typhoon_data()
+
     logging.info("재난문자 수집 시작")
     DisasterMessageCrawler().monitor()
 
