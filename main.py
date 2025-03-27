@@ -378,11 +378,13 @@ class DisasterMessageCrawler:
                     "DM_stype": "",
                     "issuing_agency": self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_LOC").text,
                     "issued_at": datetime.strptime(
-                        self.driver.find_element(By.ID, f"disasterSms_tr_{i}_CREATE_DT").text, "%Y-%m-%d %H:%M"
+                        self.driver.find_element(By.ID, f"disasterSms_tr_{i}_CREATE_DT").text,
+                        "%Y/%m/%d %H:%M:%S"  # HTML 형식에 맞게 수정
                     ),
                     "message_content": self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_CN").get_attribute("title")
                 })
-            except Exception:
+            except Exception as e:
+                logging.error(f"메시지 추출 오류 (인덱스 {i}): {e}")
                 continue
         return messages
 
