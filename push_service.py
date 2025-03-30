@@ -62,6 +62,9 @@ def send_push_notification(message: str):
     """
     logging.info("푸시 알림 전송: " + message)
     # 실제 전송 로직 추가 가능
+@app.get("/")
+def read_root():
+    return {"message": "푸시 서비스가 실행 중입니다."}
 
 
 @app.get("/push")
