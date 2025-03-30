@@ -58,37 +58,27 @@ class CassandraConnector:
 
 connector = CassandraConnector()
 
-# 통합 데이터 저장 함수
+
 def insert_rtd_data(rtd_code: int, rtd_time: datetime, rtd_loc: str, rtd_details: list):
     """
     통합 데이터 테이블(rtd_db)에 데이터를 저장하는 함수입니다.
-    각 재난별 코드(rtd_code)는 아래와 같이 매핑됩니다:
-      - 사용자 제보: 11
-      - 재난소식 - 문자: 21
-      - 재난소식 - 뉴스: 22
-      - 태풍: 31
-      - 호우: 32
-      - 홍수: 33
-      - 강풍: 34
-      - 대설: 35
-      - 폭염: 41
-      - 한파: 42
-      - 지진: 51
-      - 화재 - 산불: 61
-      - 화재 - 일일화재: 62
-      - 미세먼지 시도별 측정정보: 71
-      - 대기질 예보: 72
+    결정론적 id 생성을 위해 uuid5를 사용합니다.
     """
-    record_id = uuid4()
+    # 예시: 재난 코드, 시간, 위치, 세부정보를 문자열로 결합
+    details_str = "_".join(rtd_details)
+    unique_str = f"{rtd_code}_{rtd_time.strftime('%Y%m%d%H%M%S')}_{rtd_loc}_{details_str}"
+    record_id = uuid5(NAMESPACE_DNS, unique_str)
+
     query = """
     INSERT INTO rtd_db (rtd_code, rtd_time, id, rtd_loc, rtd_details)
-    VALUES (%s, %s, %s, %s, %s)
+    VALUES (%s, %s, %s, %s, %s) IF NOT EXISTS
     """
     try:
         connector.session.execute(SimpleStatement(query), (rtd_code, rtd_time, record_id, rtd_loc, rtd_details))
         logging.info(f"통합 데이터 저장 성공: {record_id} (코드: {rtd_code})")
     except Exception as e:
         logging.error(f"통합 데이터 저장 실패 (코드: {rtd_code}): {e}")
+
 
 # 1. 대기질 예보 데이터 수집 및 저장 (rtd_code 72)
 def get_air_inform():
