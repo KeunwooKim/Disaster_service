@@ -58,7 +58,39 @@ class CassandraConnector:
 
 connector = CassandraConnector()
 
-# 1. 대기질 예보 데이터 수집 및 저장
+# 통합 데이터 저장 함수
+def insert_rtd_data(rtd_code: int, rtd_time: datetime, rtd_loc: str, rtd_details: list):
+    """
+    통합 데이터 테이블(rtd_db)에 데이터를 저장하는 함수입니다.
+    각 재난별 코드(rtd_code)는 아래와 같이 매핑됩니다:
+      - 사용자 제보: 11
+      - 재난소식 - 문자: 21
+      - 재난소식 - 뉴스: 22
+      - 태풍: 31
+      - 호우: 32
+      - 홍수: 33
+      - 강풍: 34
+      - 대설: 35
+      - 폭염: 41
+      - 한파: 42
+      - 지진: 51
+      - 화재 - 산불: 61
+      - 화재 - 일일화재: 62
+      - 미세먼지 시도별 측정정보: 71
+      - 대기질 예보: 72
+    """
+    record_id = uuid4()
+    query = """
+    INSERT INTO rtd_db (rtd_code, rtd_time, id, rtd_loc, rtd_details)
+    VALUES (%s, %s, %s, %s, %s)
+    """
+    try:
+        connector.session.execute(SimpleStatement(query), (rtd_code, rtd_time, record_id, rtd_loc, rtd_details))
+        logging.info(f"통합 데이터 저장 성공: {record_id} (코드: {rtd_code})")
+    except Exception as e:
+        logging.error(f"통합 데이터 저장 실패 (코드: {rtd_code}): {e}")
+
+# 1. 대기질 예보 데이터 수집 및 저장 (rtd_code 72)
 def get_air_inform():
     logging.info("대기질 예보 데이터 수집 시작")
     now = datetime.now()
@@ -110,12 +142,22 @@ def get_air_inform():
                 datetime.now().date()
             ))
             saved_count += 1
+
+            # 통합 데이터 저장 (대기질 예보: 72)
+            rtd_details = [
+                f"cause: {item.get('informCause', '')}",
+                f"code: {item.get('informCode', '')}",
+                f"grade: {item.get('informGrade', '')}",
+                f"overall: {item.get('informOverall', '')}",
+                f"search_date: {datetime.now().date()}"
+            ]
+            insert_rtd_data(72, data_time, "", rtd_details)
         except Exception as e:
             logging.error(f"DB 저장 실패 (record_id: {record_id}): {e}")
     logging.info(f"대기질 예보 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 저장됨")
     return {"status": "success", "data": items}
 
-# 2. 실시간 대기질 등급 수집 및 저장
+# 2. 실시간 대기질 등급 수집 및 저장 (rtd_code 71)
 def get_air_grade():
     logging.info("실시간 대기질 등급 데이터 수집 시작")
     params = {
@@ -183,10 +225,23 @@ def get_air_grade():
                 saved_count += 1
             except Exception as e:
                 logging.error(f"삽입 실패 ({station}): {e}")
+
+        # 통합 데이터 저장 (미세먼지 시도별 측정정보: 71)
+        try:
+            rtd_details = [
+                f"pm10_grade: {pm10_grade}",
+                f"pm25_grade: {pm25_grade}",
+                f"sido: {item.get('sidoName', '')}",
+                f"station: {station}"
+            ]
+            insert_rtd_data(71, dt, station, rtd_details)
+        except Exception as e:
+            logging.error(f"통합 미세먼지 데이터 저장 오류 ({station}): {e}")
+
     logging.info(f"실시간 대기질 등급 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 처리됨")
     return {"status": "success", "data": items}
 
-# 3. 지진 정보 수집 및 저장 (최신 eq_time과 비교하여 중복 방지)
+# 3. 지진 정보 수집 및 저장 (rtd_code 51)
 def fetch_earthquake_data():
     logging.info("지진 정보 수집 시작")
     kst = timezone(timedelta(hours=9))
@@ -248,12 +303,21 @@ def fetch_earthquake_data():
             """
             connector.session.execute(SimpleStatement(insert_stmt), (record_id, dt, lat_num, lon_num, magnitude, msg))
             saved_count += 1
+
+            # 통합 데이터 저장 (지진: 51)
+            rtd_details = [
+                f"magnitude: {magnitude}",
+                f"location: {location}",
+                f"latitude: {lat_num}",
+                f"longitude: {lon_num}"
+            ]
+            insert_rtd_data(51, dt, location, rtd_details)
         except Exception as e:
             logging.error(f"지진 파싱 오류 (row: {row}): {e}")
     logging.info(f"지진 정보 저장 완료: 총 {total_rows} 행 중 {saved_count}건 저장됨")
 
 # ----------------------------------------------------
-# 4. 태풍 데이터 (추가)
+# 4. 태풍 데이터 (rtd_code 31)
 # ----------------------------------------------------
 TYPHOON_CODE = 31
 last_forecast_time = None  # 간단 예시로 전역 변수 사용
@@ -310,12 +374,12 @@ def fetch_typhoon_data():
 
         # 태풍 정보 추출 (필드명은 실제 API 응답에 맞춰 조정하세요)
         name = item.findtext('typName')         # 태풍 이름
-        direction = item.findtext('typDir')     # 진행 방향
-        lat_str = item.findtext('typLat')       # 위도
-        lon_str = item.findtext('typLon')       # 경도
-        loc = item.findtext('typLoc')           # 위치
-        intensity = item.findtext('typInt')     # 강도 (예: "중", "강", "매우강")
-        wind_str = item.findtext('typ15')       # 강풍 반경(15m/s)
+        direction = item.findtext('typDir')       # 진행 방향
+        lat_str = item.findtext('typLat')         # 위도
+        lon_str = item.findtext('typLon')         # 경도
+        loc = item.findtext('typLoc')             # 위치
+        intensity = item.findtext('typInt')       # 강도 (예: "중", "강", "매우강")
+        wind_str = item.findtext('typ15')         # 강풍 반경(15m/s)
 
         try:
             lat = float(lat_str) if lat_str else 0.0
@@ -391,12 +455,21 @@ def get_typhoon_data():
                 item['wind_radius']
             ))
             saved_count += 1
+
+            # 통합 데이터 저장 (태풍: 31)
+            rtd_details = [
+                f"typ_name: {item['typ_name']}",
+                f"typ_dir: {item['typ_dir']}",
+                f"intensity: {item['intensity']}",
+                f"wind_radius: {item['wind_radius']}"
+            ]
+            insert_rtd_data(31, item['forecast_time'], item['typ_location'], rtd_details)
         except Exception as e:
             logging.error(f"태풍 정보 저장 실패: {e}")
 
     logging.info(f"태풍 정보 저장 완료: 총 {len(data)}건 중 {saved_count}건 저장됨")
 
-# 5. 재난문자 크롤러
+# 5. 재난문자 크롤러 (재난소식 - 문자: 21)
 class DisasterMessageCrawler:
     def __init__(self):
         chrome_driver_path = '/usr/local/bin/chromedriver'
@@ -426,6 +499,15 @@ class DisasterMessageCrawler:
                     msg['issuing_agency'], msg['issued_at'], msg['message_content']
                 ))
                 logging.info(f"메시지 저장됨: {msg['message_id']}")
+
+                # 통합 데이터 저장 (재난소식 - 문자: 21)
+                rtd_details = [
+                    f"emergency_level: {msg['emergency_level']}",
+                    f"DM_ntype: {msg['DM_ntype']}",
+                    f"issuing_agency: {msg['issuing_agency']}",
+                    f"content: {msg['message_content']}"
+                ]
+                insert_rtd_data(21, msg['issued_at'], msg['issuing_agency'], rtd_details)
             except Exception as e:
                 logging.error(f"메시지 저장 오류 ({msg['message_id']}): {e}")
 
