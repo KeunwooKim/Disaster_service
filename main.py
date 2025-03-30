@@ -513,7 +513,7 @@ class DisasterMessageCrawler:
 
     def show_status(self):
         print("=== 저장 현황 ===")
-        for table in ["airinform", "airgrade", "domestic_earthquake", "domestic_typhoon", "disaster_message"]:
+        for table in ["airinform", "airgrade", "domestic_earthquake", "domestic_typhoon", "disaster_message", "rtd_db"]:
             result = connector.session.execute(f"SELECT count(*) FROM {table};")
             for row in result:
                 print(f"{table}: {row.count}건")
