@@ -23,16 +23,23 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.chrome.service import Service
 
-# 환경 변수 로드
-load_dotenv()
-API_KEY = os.getenv("API_KEY", "7dWUeNJAqaan8oJAs5CbDWKnWaJpLWoxd+lB97UDDRgFfSjfKD7ZGHxM+kRAoZqsga+WlheugBMS2q9WCSaUNg==")
-EQ_API_KEY = os.getenv("EQ_API_KEY", "F5Iz7aHpRUSSM-2h6ZVE2w")
+# FastAPI 관련 모듈
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+import uvicorn
 
 # 로깅 설정
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+
+# 환경 변수 로드
+load_dotenv()
+API_KEY = os.getenv("API_KEY",
+                    "7dWUeNJAqaan8oJAs5CbDWKnWaJpLWoxd+lB97UDDRgFfSjfKD7ZGHxM+kRAoZqsga+WlheugBMS2q9WCSaUNg==")
+EQ_API_KEY = os.getenv("EQ_API_KEY", "F5Iz7aHpRUSSM-2h6ZVE2w")
+
 
 # Cassandra 연결
 class CassandraConnector:
@@ -56,16 +63,38 @@ class CassandraConnector:
                 time.sleep(10)
         raise Exception("Cassandra 연결 실패")
 
+
 connector = CassandraConnector()
 
 
+# ---------------------------
+# 통합 데이터 저장 함수
+# ---------------------------
 def insert_rtd_data(rtd_code: int, rtd_time: datetime, rtd_loc: str, rtd_details: list):
     """
     통합 데이터 테이블(rtd_db)에 데이터를 저장하는 함수입니다.
-    결정론적 id 생성을 위해 uuid5를 사용합니다.
+    결정론적 ID 생성을 위해 uuid5를 사용합니다.
+    (입력 값 정규화: rtd_details의 항목은 정렬하여 순서 변동에 의한 차이를 줄임)
+
+    재난별 코드:
+      - 사용자 제보: 11
+      - 재난소식 - 문자: 21
+      - 재난소식 - 뉴스: 22
+      - 태풍: 31
+      - 호우: 32
+      - 홍수: 33
+      - 강풍: 34
+      - 대설: 35
+      - 폭염: 41
+      - 한파: 42
+      - 지진: 51
+      - 화재 - 산불: 61
+      - 화재 - 일일화재: 62
+      - 미세먼지 시도별 측정정보: 71
+      - 대기질 예보: 72
     """
-    # 예시: 재난 코드, 시간, 위치, 세부정보를 문자열로 결합
-    details_str = "_".join(rtd_details)
+    # rtd_details를 정렬하여 문자열화 (순서에 따른 변동 최소화)
+    details_str = "_".join(sorted(rtd_details))
     unique_str = f"{rtd_code}_{rtd_time.strftime('%Y%m%d%H%M%S')}_{rtd_loc}_{details_str}"
     record_id = uuid5(NAMESPACE_DNS, unique_str)
 
@@ -80,7 +109,11 @@ def insert_rtd_data(rtd_code: int, rtd_time: datetime, rtd_loc: str, rtd_details
         logging.error(f"통합 데이터 저장 실패 (코드: {rtd_code}): {e}")
 
 
-# 1. 대기질 예보 데이터 수집 및 저장 (rtd_code 72)
+# ---------------------------
+# 데이터 수집 함수들
+# ---------------------------
+
+# 1. 대기질 예보 데이터 수집 (rtd_code 72)
 def get_air_inform():
     logging.info("대기질 예보 데이터 수집 시작")
     now = datetime.now()
@@ -93,7 +126,8 @@ def get_air_inform():
         "serviceKey": API_KEY
     }
     try:
-        response = requests.get("http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth", params=params, timeout=10)
+        response = requests.get("http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth",
+                                params=params, timeout=10)
         response.raise_for_status()
         logging.info("대기질 예보 API 연결 확인")
     except Exception as e:
@@ -138,8 +172,7 @@ def get_air_inform():
                 f"cause: {item.get('informCause', '')}",
                 f"code: {item.get('informCode', '')}",
                 f"grade: {item.get('informGrade', '')}",
-                f"overall: {item.get('informOverall', '')}",
-                f"search_date: {datetime.now().date()}"
+                f"overall: {item.get('informOverall', '')}"
             ]
             insert_rtd_data(72, data_time, "", rtd_details)
         except Exception as e:
@@ -147,7 +180,8 @@ def get_air_inform():
     logging.info(f"대기질 예보 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 저장됨")
     return {"status": "success", "data": items}
 
-# 2. 실시간 대기질 등급 수집 및 저장 (rtd_code 71)
+
+# 2. 실시간 대기질 등급 수집 (rtd_code 71)
 def get_air_grade():
     logging.info("실시간 대기질 등급 데이터 수집 시작")
     params = {
@@ -159,7 +193,8 @@ def get_air_grade():
         "ver": "1.3"
     }
     try:
-        response = requests.get("http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty", params=params, timeout=10)
+        response = requests.get("http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty",
+                                params=params, timeout=10)
         response.raise_for_status()
         logging.info("실시간 미세먼지 API 연결 확인")
     except Exception as e:
@@ -177,7 +212,6 @@ def get_air_grade():
     for item in items:
         if item.get("pm10Grade1h") is None and item.get("pm25Grade1h") is None:
             continue
-
         try:
             dt = datetime.strptime(item["dataTime"], "%Y-%m-%d %H:%M").replace(tzinfo=korea_tz).astimezone(timezone.utc)
         except Exception:
@@ -231,7 +265,8 @@ def get_air_grade():
     logging.info(f"실시간 대기질 등급 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 처리됨")
     return {"status": "success", "data": items}
 
-# 3. 지진 정보 수집 및 저장 (rtd_code 51)
+
+# 3. 지진 정보 수집 (rtd_code 51)
 def fetch_earthquake_data():
     logging.info("지진 정보 수집 시작")
     kst = timezone(timedelta(hours=9))
@@ -263,7 +298,6 @@ def fetch_earthquake_data():
         if not row or row[0].strip().startswith("#"):
             continue
         total_rows += 1
-
         combined = " ".join(row)
         tokens = combined.strip().split()
         if len(tokens) < 7:
@@ -271,14 +305,12 @@ def fetch_earthquake_data():
         tp = tokens[0]
         if tp != "3":
             continue
-
         try:
             tm_eqk = tokens[3]
             dt = datetime.strptime(tm_eqk[:14], "%Y%m%d%H%M%S").replace(tzinfo=kst).astimezone(timezone.utc)
             if latest_eq_time is not None and dt <= latest_eq_time:
                 logging.info(f"이미 저장된 최신 eq_time({latest_eq_time})보다 이전이므로 저장 안 함: {dt}")
                 continue
-
             magnitude = float(tokens[4])
             lat_num = float(tokens[5])
             lon_num = float(tokens[6])
@@ -306,23 +338,16 @@ def fetch_earthquake_data():
             logging.error(f"지진 파싱 오류 (row: {row}): {e}")
     logging.info(f"지진 정보 저장 완료: 총 {total_rows} 행 중 {saved_count}건 저장됨")
 
-# ----------------------------------------------------
-# 4. 태풍 데이터 (rtd_code 31)
-# ----------------------------------------------------
+
+# 4. 태풍 데이터 수집 (rtd_code 31)
 TYPHOON_CODE = 31
-last_forecast_time = None  # 간단 예시로 전역 변수 사용
+last_forecast_time = None  # 전역 변수로 마지막 예보 시각 기록
+
 
 def fetch_typhoon_data():
-    """
-    기상청 태풍정보조회서비스(getTyphoonInfo) API를 호출하여
-    태풍 정보를 파싱 후 리스트 형태로 반환한다.
-    """
     global last_forecast_time
-
-    # 현재 날짜 (yyyyMMdd)
     kst = timezone(timedelta(hours=9))
     current_date = datetime.now(kst).strftime('%Y%m%d')
-    # API 호출 URL 및 파라미터 설정
     url = 'http://apis.data.go.kr/1360000/TyphoonInfoService/getTyphoonInfo'
     params = {
         'serviceKey': 'D0I8CLciGzwIaBmM6g6XitlVfgkLBO83zDl4EnUUoxifvRlSZHu78BqoixtzJg17Gb06up+NHzPXjN0cA7sLOg==',
@@ -332,45 +357,34 @@ def fetch_typhoon_data():
         'fromTmFc': current_date,
         'toTmFc': current_date
     }
-
     try:
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
     except Exception as e:
         logging.error(f"태풍 API 호출 실패: {e}")
         return []
-
-    # XML 파싱
     root = ET.fromstring(response.content)
     items = root.findall('.//item')
     if not items:
         logging.info("태풍 데이터가 없습니다.")
         return []
-
     typhoon_data = []
     for item in items:
-        forecast_time = item.findtext('tmFc')  # 예보 시각 (예: 202503201600)
+        forecast_time = item.findtext('tmFc')
         if not forecast_time:
             continue
-
-        # 간단 중복 예시: 이전에 처리한 예보 시각이면 스킵
         if forecast_time == last_forecast_time:
             continue
-
-        # KST -> UTC 변환
         korea_timezone = timezone(timedelta(hours=9))
         formatted_forecast_time = datetime.strptime(forecast_time, "%Y%m%d%H%M")
         formatted_forecast_time = formatted_forecast_time.replace(tzinfo=korea_timezone).astimezone(timezone.utc)
-
-        # 태풍 정보 추출 (필드명은 실제 API 응답에 맞춰 조정하세요)
-        name = item.findtext('typName')         # 태풍 이름
-        direction = item.findtext('typDir')       # 진행 방향
-        lat_str = item.findtext('typLat')         # 위도
-        lon_str = item.findtext('typLon')         # 경도
-        loc = item.findtext('typLoc')             # 위치
-        intensity = item.findtext('typInt')       # 강도 (예: "중", "강", "매우강")
-        wind_str = item.findtext('typ15')         # 강풍 반경(15m/s)
-
+        name = item.findtext('typName')
+        direction = item.findtext('typDir')
+        lat_str = item.findtext('typLat')
+        lon_str = item.findtext('typLon')
+        loc = item.findtext('typLoc')
+        intensity = item.findtext('typInt')
+        wind_str = item.findtext('typ15')
         try:
             lat = float(lat_str) if lat_str else 0.0
         except:
@@ -383,7 +397,6 @@ def fetch_typhoon_data():
             wind_radius = int(wind_str) if wind_str else 0
         except:
             wind_radius = 0
-
         typhoon_data.append({
             "forecast_time": formatted_forecast_time,
             "typ_name": name or "",
@@ -394,29 +407,20 @@ def fetch_typhoon_data():
             "intensity": intensity or "",
             "wind_radius": wind_radius
         })
-
-        # 마지막 예보 시각 갱신
         last_forecast_time = forecast_time
-
     return typhoon_data
 
+
 def get_typhoon_data():
-    """
-    fetch_typhoon_data()로부터 태풍 정보를 가져와
-    domestic_typhoon 테이블에 저장한다.
-    """
     logging.info("태풍 정보 수집 시작")
     data = fetch_typhoon_data()
     if not data:
         logging.info("새로운 태풍 정보가 없습니다.")
         return
-
     saved_count = 0
     for item in data:
-        # 중복 방지를 위해 uuid5를 사용 (태풍명+시간+위도+경도 등)
         unique_str = f"{item['forecast_time'].strftime('%Y%m%d%H%M')}_{item['typ_name']}_{item['typ_lat']}_{item['typ_lon']}"
         typ_no = uuid5(NAMESPACE_DNS, unique_str)
-
         insert_query = """
         INSERT INTO domestic_typhoon (
             typ_no,
@@ -445,8 +449,6 @@ def get_typhoon_data():
                 item['wind_radius']
             ))
             saved_count += 1
-
-            # 통합 데이터 저장 (태풍: 31)
             rtd_details = [
                 f"typ_name: {item['typ_name']}",
                 f"typ_dir: {item['typ_dir']}",
@@ -456,8 +458,8 @@ def get_typhoon_data():
             insert_rtd_data(31, item['forecast_time'], item['typ_location'], rtd_details)
         except Exception as e:
             logging.error(f"태풍 정보 저장 실패: {e}")
-
     logging.info(f"태풍 정보 저장 완료: 총 {len(data)}건 중 {saved_count}건 저장됨")
+
 
 # 5. 재난문자 크롤러 (재난소식 - 문자: 21)
 class DisasterMessageCrawler:
@@ -489,8 +491,6 @@ class DisasterMessageCrawler:
                     msg['issuing_agency'], msg['issued_at'], msg['message_content']
                 ))
                 logging.info(f"메시지 저장됨: {msg['message_id']}")
-
-                # 통합 데이터 저장 (재난소식 - 문자: 21)
                 rtd_details = [
                     f"emergency_level: {msg['emergency_level']}",
                     f"DM_ntype: {msg['DM_ntype']}",
@@ -535,7 +535,6 @@ class DisasterMessageCrawler:
             get_typhoon_data()
             logging.info("전체 수집 완료")
         elif cmd == "6":
-            # ★ 태풍 정보만 단독으로 수집하는 명령어 추가
             logging.info("태풍 정보 수집 시작")
             get_typhoon_data()
             logging.info("태풍 정보 수집 완료")
@@ -552,7 +551,7 @@ class DisasterMessageCrawler:
         print(" 3 → 실시간 미세먼지 수집")
         print(" 4 → 지진 정보 수집")
         print(" 5 → 전체 수집 (대기 예보 + 미세먼지 + 지진 + 태풍)")
-        print(" 6 → 태풍 정보 수집")  # ★ 도움말에 태풍 명령 추가
+        print(" 6 → 태풍 정보 수집")
         print(" ? → 명령어 도움말")
         print(" q 또는 exit → 종료")
 
@@ -562,13 +561,10 @@ class DisasterMessageCrawler:
         last_check_time = time.time()
         while True:
             try:
-                # 비동기적으로 명령어 입력 확인
                 if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
                     cmd = input().strip().lower()
                     if self.process_command(cmd):
                         break
-
-                # 60초마다 신규 메시지 체크
                 if time.time() - last_check_time > 60:
                     messages = self.check_messages()
                     if messages:
@@ -604,27 +600,89 @@ class DisasterMessageCrawler:
                         self.driver.find_element(By.ID, f"disasterSms_tr_{i}_CREATE_DT").text,
                         "%Y/%m/%d %H:%M:%S"
                     ),
-                    "message_content": self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_CN").get_attribute("title")
+                    "message_content": self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_CN").get_attribute(
+                        "title")
                 })
             except Exception as e:
                 logging.error(f"메시지 추출 오류 (인덱스 {i}): {e}")
                 continue
         return messages
 
+
+# ---------------------------
+# FastAPI 푸시 서비스
+# ---------------------------
+app = FastAPI()
+
+
+def send_push_notification(message: str):
+    """
+    실제 푸시 알림 전송 코드(예: FCM, APNs 등) 대신, 여기서는 로그로 출력합니다.
+    """
+    logging.info("푸시 알림 전송: " + message)
+    # 실제 전송 로직 추가 가능
+
+
+@app.get("/push")
+def push_notifications():
+    """
+    최근 5분간의 rtd_db 이벤트를 조회하여,
+      - rtd_code 71 (미세먼지) 이벤트의 경우, rtd_details에 포함된 pm10_grade 또는 pm25_grade가 3 이상이면 알림 전송
+      - 그 외 재난 이벤트는 조건 없이 모두 푸시 알림 전송
+    """
+    recent_time = datetime.utcnow() - timedelta(minutes=5)
+    query = "SELECT rtd_code, rtd_time, rtd_loc, rtd_details FROM rtd_db WHERE rtd_time > %s ALLOW FILTERING"
+    statement = SimpleStatement(query)
+    rows = connector.session.execute(statement, (recent_time,))
+
+    notifications = []
+    for row in rows:
+        # 미세먼지 관련 알림인 경우 (rtd_code 71)
+        if row.rtd_code == 71:
+            grade_ok = False
+            for detail in row.rtd_details:
+                if "pm10_grade:" in detail:
+                    try:
+                        grade = int(detail.split("pm10_grade:")[1].strip())
+                        if grade >= 3:
+                            grade_ok = True
+                    except Exception:
+                        pass
+                elif "pm25_grade:" in detail:
+                    try:
+                        grade = int(detail.split("pm25_grade:")[1].strip())
+                        if grade >= 3:
+                            grade_ok = True
+                    except Exception:
+                        pass
+            if grade_ok:
+                message = f"[대기질 경보] 지역: {row.rtd_loc} / 상세: {', '.join(row.rtd_details)}"
+                send_push_notification(message)
+                notifications.append(message)
+        else:
+            message = f"[재난 알림 - 코드 {row.rtd_code}] 지역: {row.rtd_loc} / 상세: {', '.join(row.rtd_details)}"
+            send_push_notification(message)
+            notifications.append(message)
+
+    return JSONResponse(content={"notifications_sent": notifications})
+
+
+# ---------------------------
+# 메인 실행부
+# ---------------------------
 def main():
     logging.info("데이터 수집 시작")
-
-    # 1. 대기 예보
     get_air_inform()
-    # 2. 실시간 미세먼지
     get_air_grade()
-    # 3. 지진 정보
     fetch_earthquake_data()
-    # 4. 태풍 정보
     get_typhoon_data()
-
     logging.info("재난문자 수집 시작")
     DisasterMessageCrawler().monitor()
 
+
 if __name__ == "__main__":
-    main()
+    # 데이터 수집/모니터링 모드 실행 시:
+    # main()
+
+    # FastAPI 서버 실행 (푸시 서비스)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
