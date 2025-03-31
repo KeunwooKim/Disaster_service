@@ -23,16 +23,26 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.chrome.service import Service
 
+# FCM 관련 라이브러리 (서비스 계정 인증)
+from google.oauth2 import service_account
+import google.auth.transport.requests
+
 # 환경 변수 로드
 load_dotenv()
-API_KEY = os.getenv("API_KEY", "7dWUeNJAqaan8oJAs5CbDWKnWaJpLWoxd+lB97UDDRgFfSjfKD7ZGHxM+kRAoZqsga+WlheugBMS2q9WCSaUNg==")
+API_KEY = os.getenv("API_KEY",
+                    "7dWUeNJAqaan8oJAs5CbDWKnWaJpLWoxd+lB97UDDRgFfSjfKD7ZGHxM+kRAoZqsga+WlheugBMS2q9WCSaUNg==")
 EQ_API_KEY = os.getenv("EQ_API_KEY", "F5Iz7aHpRUSSM-2h6ZVE2w")
+# FCM 관련 환경 변수 (서비스 계정 파일 경로와 프로젝트 ID)
+FCM_PROJECT_ID = os.getenv("FCM_PROJECT_ID", "disaster")
+GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/root/Project_Disaster/disaster-9dbd5-firebase-adminsdk-fbsvc-c4498ef23c.json")
+FCM_SCOPE = ["https://www.googleapis.com/auth/firebase.messaging"]
 
 # 로깅 설정
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+
 
 # Cassandra 연결
 class CassandraConnector:
@@ -56,6 +66,7 @@ class CassandraConnector:
                 time.sleep(10)
         raise Exception("Cassandra 연결 실패")
 
+
 connector = CassandraConnector()
 
 
@@ -64,7 +75,6 @@ def insert_rtd_data(rtd_code: int, rtd_time: datetime, rtd_loc: str, rtd_details
     통합 데이터 테이블(rtd_db)에 데이터를 저장하는 함수입니다.
     결정론적 id 생성을 위해 uuid5를 사용합니다.
     """
-    # 예시: 재난 코드, 시간, 위치, 세부정보를 문자열로 결합
     details_str = "_".join(rtd_details)
     unique_str = f"{rtd_code}_{rtd_time.strftime('%Y%m%d%H%M%S')}_{rtd_loc}_{details_str}"
     record_id = uuid5(NAMESPACE_DNS, unique_str)
@@ -80,6 +90,48 @@ def insert_rtd_data(rtd_code: int, rtd_time: datetime, rtd_loc: str, rtd_details
         logging.error(f"통합 데이터 저장 실패 (코드: {rtd_code}): {e}")
 
 
+# FCM 푸시 알림 전송 함수 (HTTP v1 API)
+def send_fcm_notification(title: str, body: str, data: dict = {}):
+    """
+    FCM HTTP v1 API를 사용해 푸시 알림을 전송합니다.
+    - 서비스 계정 JSON 파일 경로는 GOOGLE_APPLICATION_CREDENTIALS 환경 변수에서 가져옵니다.
+    - FCM 프로젝트 ID는 FCM_PROJECT_ID 환경 변수에서 가져옵니다.
+    - 기본적으로 'disaster' 토픽으로 메시지를 전송합니다.
+    """
+    try:
+        credentials = service_account.Credentials.from_service_account_file(
+            GOOGLE_APPLICATION_CREDENTIALS, scopes=FCM_SCOPE
+        )
+        request_obj = google.auth.transport.requests.Request()
+        credentials.refresh(request_obj)
+        access_token = credentials.token
+    except Exception as e:
+        logging.error(f"FCM 액세스 토큰 생성 실패: {e}")
+        return
+
+    url = f"https://fcm.googleapis.com/v1/projects/{FCM_PROJECT_ID}/messages:send"
+    payload = {
+        "message": {
+            "topic": "disaster",
+            "notification": {
+                "title": title,
+                "body": body
+            },
+            "data": data
+        }
+    }
+    headers = {
+        "Authorization": "Bearer " + access_token,
+        "Content-Type": "application/json; UTF-8"
+    }
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        logging.info(f"FCM 푸시 알림 전송 성공: {response.json()}")
+    except Exception as e:
+        logging.error(f"FCM 푸시 알림 전송 실패: {e}")
+
+
 # 1. 대기질 예보 데이터 수집 및 저장 (rtd_code 72)
 def get_air_inform():
     logging.info("대기질 예보 데이터 수집 시작")
@@ -93,7 +145,8 @@ def get_air_inform():
         "serviceKey": API_KEY
     }
     try:
-        response = requests.get("http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth", params=params, timeout=10)
+        response = requests.get("http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth",
+                                params=params, timeout=10)
         response.raise_for_status()
         logging.info("대기질 예보 API 연결 확인")
     except Exception as e:
@@ -147,6 +200,7 @@ def get_air_inform():
     logging.info(f"대기질 예보 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 저장됨")
     return {"status": "success", "data": items}
 
+
 # 2. 실시간 대기질 등급 수집 및 저장 (rtd_code 71)
 def get_air_grade():
     logging.info("실시간 대기질 등급 데이터 수집 시작")
@@ -159,7 +213,8 @@ def get_air_grade():
         "ver": "1.3"
     }
     try:
-        response = requests.get("http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty", params=params, timeout=10)
+        response = requests.get("http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty",
+                                params=params, timeout=10)
         response.raise_for_status()
         logging.info("실시간 미세먼지 API 연결 확인")
     except Exception as e:
@@ -230,6 +285,7 @@ def get_air_grade():
 
     logging.info(f"실시간 대기질 등급 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 처리됨")
     return {"status": "success", "data": items}
+
 
 # 3. 지진 정보 수집 및 저장 (rtd_code 51)
 def fetch_earthquake_data():
@@ -302,15 +358,24 @@ def fetch_earthquake_data():
                 f"longitude: {lon_num}"
             ]
             insert_rtd_data(51, dt, location, rtd_details)
+
+            # FCM 푸시 알림 전송 (예: 지진 발생 알림)
+            send_fcm_notification(
+                title="지진 발생 알림",
+                body=f"{location}에서 규모 {magnitude}의 지진이 발생했습니다.",
+                data={"eq_no": str(record_id), "eq_time": dt.isoformat()}
+            )
         except Exception as e:
             logging.error(f"지진 파싱 오류 (row: {row}): {e}")
     logging.info(f"지진 정보 저장 완료: 총 {total_rows} 행 중 {saved_count}건 저장됨")
+
 
 # ----------------------------------------------------
 # 4. 태풍 데이터 (rtd_code 31)
 # ----------------------------------------------------
 TYPHOON_CODE = 31
 last_forecast_time = None  # 간단 예시로 전역 변수 사용
+
 
 def fetch_typhoon_data():
     """
@@ -319,10 +384,8 @@ def fetch_typhoon_data():
     """
     global last_forecast_time
 
-    # 현재 날짜 (yyyyMMdd)
     kst = timezone(timedelta(hours=9))
     current_date = datetime.now(kst).strftime('%Y%m%d')
-    # API 호출 URL 및 파라미터 설정
     url = 'http://apis.data.go.kr/1360000/TyphoonInfoService/getTyphoonInfo'
     params = {
         'serviceKey': 'D0I8CLciGzwIaBmM6g6XitlVfgkLBO83zDl4EnUUoxifvRlSZHu78BqoixtzJg17Gb06up+NHzPXjN0cA7sLOg==',
@@ -340,7 +403,6 @@ def fetch_typhoon_data():
         logging.error(f"태풍 API 호출 실패: {e}")
         return []
 
-    # XML 파싱
     root = ET.fromstring(response.content)
     items = root.findall('.//item')
     if not items:
@@ -349,27 +411,24 @@ def fetch_typhoon_data():
 
     typhoon_data = []
     for item in items:
-        forecast_time = item.findtext('tmFc')  # 예보 시각 (예: 202503201600)
+        forecast_time = item.findtext('tmFc')
         if not forecast_time:
             continue
 
-        # 간단 중복 예시: 이전에 처리한 예보 시각이면 스킵
         if forecast_time == last_forecast_time:
             continue
 
-        # KST -> UTC 변환
         korea_timezone = timezone(timedelta(hours=9))
         formatted_forecast_time = datetime.strptime(forecast_time, "%Y%m%d%H%M")
         formatted_forecast_time = formatted_forecast_time.replace(tzinfo=korea_timezone).astimezone(timezone.utc)
 
-        # 태풍 정보 추출 (필드명은 실제 API 응답에 맞춰 조정하세요)
-        name = item.findtext('typName')         # 태풍 이름
-        direction = item.findtext('typDir')       # 진행 방향
-        lat_str = item.findtext('typLat')         # 위도
-        lon_str = item.findtext('typLon')         # 경도
-        loc = item.findtext('typLoc')             # 위치
-        intensity = item.findtext('typInt')       # 강도 (예: "중", "강", "매우강")
-        wind_str = item.findtext('typ15')         # 강풍 반경(15m/s)
+        name = item.findtext('typName')
+        direction = item.findtext('typDir')
+        lat_str = item.findtext('typLat')
+        lon_str = item.findtext('typLon')
+        loc = item.findtext('typLoc')
+        intensity = item.findtext('typInt')
+        wind_str = item.findtext('typ15')
 
         try:
             lat = float(lat_str) if lat_str else 0.0
@@ -395,16 +454,12 @@ def fetch_typhoon_data():
             "wind_radius": wind_radius
         })
 
-        # 마지막 예보 시각 갱신
         last_forecast_time = forecast_time
 
     return typhoon_data
 
+
 def get_typhoon_data():
-    """
-    fetch_typhoon_data()로부터 태풍 정보를 가져와
-    domestic_typhoon 테이블에 저장한다.
-    """
     logging.info("태풍 정보 수집 시작")
     data = fetch_typhoon_data()
     if not data:
@@ -413,7 +468,6 @@ def get_typhoon_data():
 
     saved_count = 0
     for item in data:
-        # 중복 방지를 위해 uuid5를 사용 (태풍명+시간+위도+경도 등)
         unique_str = f"{item['forecast_time'].strftime('%Y%m%d%H%M')}_{item['typ_name']}_{item['typ_lat']}_{item['typ_lon']}"
         typ_no = uuid5(NAMESPACE_DNS, unique_str)
 
@@ -446,7 +500,6 @@ def get_typhoon_data():
             ))
             saved_count += 1
 
-            # 통합 데이터 저장 (태풍: 31)
             rtd_details = [
                 f"typ_name: {item['typ_name']}",
                 f"typ_dir: {item['typ_dir']}",
@@ -454,10 +507,18 @@ def get_typhoon_data():
                 f"wind_radius: {item['wind_radius']}"
             ]
             insert_rtd_data(31, item['forecast_time'], item['typ_location'], rtd_details)
+
+            # FCM 푸시 알림 (태풍 관련)
+            send_fcm_notification(
+                title="태풍 정보 업데이트",
+                body=f"{item['typ_name']} 태풍 정보가 업데이트되었습니다.",
+                data={"typ_no": str(typ_no), "forecast_time": item['forecast_time'].isoformat()}
+            )
         except Exception as e:
             logging.error(f"태풍 정보 저장 실패: {e}")
 
     logging.info(f"태풍 정보 저장 완료: 총 {len(data)}건 중 {saved_count}건 저장됨")
+
 
 # 5. 재난문자 크롤러 (재난소식 - 문자: 21)
 class DisasterMessageCrawler:
@@ -489,6 +550,16 @@ class DisasterMessageCrawler:
                     msg['issuing_agency'], msg['issued_at'], msg['message_content']
                 ))
                 logging.info(f"메시지 저장됨: {msg['message_id']}")
+
+                # FCM 푸시 알림 전송 (재난문자 관련)
+                send_fcm_notification(
+                    title=f"재난 알림 - {msg['emergency_level']}",
+                    body=msg['message_content'],
+                    data={
+                        "message_id": str(msg['message_id']),
+                        "issued_at": msg['issued_at'].isoformat()
+                    }
+                )
 
                 # 통합 데이터 저장 (재난소식 - 문자: 21)
                 rtd_details = [
@@ -535,7 +606,6 @@ class DisasterMessageCrawler:
             get_typhoon_data()
             logging.info("전체 수집 완료")
         elif cmd == "6":
-            # ★ 태풍 정보만 단독으로 수집하는 명령어 추가
             logging.info("태풍 정보 수집 시작")
             get_typhoon_data()
             logging.info("태풍 정보 수집 완료")
@@ -552,7 +622,7 @@ class DisasterMessageCrawler:
         print(" 3 → 실시간 미세먼지 수집")
         print(" 4 → 지진 정보 수집")
         print(" 5 → 전체 수집 (대기 예보 + 미세먼지 + 지진 + 태풍)")
-        print(" 6 → 태풍 정보 수집")  # ★ 도움말에 태풍 명령 추가
+        print(" 6 → 태풍 정보 수집")
         print(" ? → 명령어 도움말")
         print(" q 또는 exit → 종료")
 
@@ -562,13 +632,11 @@ class DisasterMessageCrawler:
         last_check_time = time.time()
         while True:
             try:
-                # 비동기적으로 명령어 입력 확인
                 if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
                     cmd = input().strip().lower()
                     if self.process_command(cmd):
                         break
 
-                # 60초마다 신규 메시지 체크
                 if time.time() - last_check_time > 60:
                     messages = self.check_messages()
                     if messages:
@@ -604,27 +672,25 @@ class DisasterMessageCrawler:
                         self.driver.find_element(By.ID, f"disasterSms_tr_{i}_CREATE_DT").text,
                         "%Y/%m/%d %H:%M:%S"
                     ),
-                    "message_content": self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_CN").get_attribute("title")
+                    "message_content": self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_CN").get_attribute(
+                        "title")
                 })
             except Exception as e:
                 logging.error(f"메시지 추출 오류 (인덱스 {i}): {e}")
                 continue
         return messages
 
+
 def main():
     logging.info("데이터 수집 시작")
-
-    # 1. 대기 예보
     get_air_inform()
-    # 2. 실시간 미세먼지
     get_air_grade()
-    # 3. 지진 정보
     fetch_earthquake_data()
-    # 4. 태풍 정보
     get_typhoon_data()
 
     logging.info("재난문자 수집 시작")
     DisasterMessageCrawler().monitor()
+
 
 if __name__ == "__main__":
     main()
