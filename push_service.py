@@ -33,9 +33,11 @@ except Exception as e:
 
 app = FastAPI()
 
+
 @app.get("/")
 def read_root():
     return {"message": "Test Events API is running."}
+
 
 @app.get("/events")
 def get_test_events():
@@ -63,6 +65,39 @@ def get_test_events():
     except Exception as e:
         logging.error(f"Cassandra 조회 에러: {e}")
         raise HTTPException(status_code=500, detail="Cassandra 조회 실패")
+
+
+@app.get("/rtd/search")
+def search_rtd(rtd_code: int, rtd_loc: str):
+    """
+    rtd_db 테이블에서 재난 유형(rtd_code)과 재난 장소(rtd_loc)를 기준으로
+    데이터를 검색하여 JSON으로 반환하는 엔드포인트입니다.
+
+    주의: Cassandra에서는 문자열 검색 시 ALLOW FILTERING을 사용하므로,
+    프로덕션 환경에서는 적절한 인덱싱이나 데이터 모델링이 필요합니다.
+    """
+    try:
+        query = """
+            SELECT rtd_code, rtd_time, id, rtd_loc, rtd_details 
+            FROM rtd_db 
+            WHERE rtd_code = %s AND rtd_loc = %s ALLOW FILTERING
+        """
+        rows = session.execute(query, (rtd_code, rtd_loc))
+        results = []
+        for row in rows:
+            result = {
+                "rtd_code": row.rtd_code,
+                "rtd_time": row.rtd_time.isoformat() if row.rtd_time else None,
+                "id": str(row.id),
+                "rtd_loc": row.rtd_loc,
+                "rtd_details": row.rtd_details  # 리스트로 저장되어 있다면 그대로 반환
+            }
+            results.append(result)
+        return JSONResponse(content={"results": results, "count": len(results)})
+    except Exception as e:
+        logging.error(f"rtd_db 검색 에러: {e}")
+        raise HTTPException(status_code=500, detail="rtd_db 검색 실패")
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
