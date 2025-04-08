@@ -64,7 +64,6 @@ def insert_rtd_data(rtd_code: int, rtd_time: datetime, rtd_loc: str, rtd_details
     통합 데이터 테이블(rtd_db)에 데이터를 저장하는 함수입니다.
     결정론적 id 생성을 위해 uuid5를 사용합니다.
     """
-    # 예시: 재난 코드, 시간, 위치, 세부정보를 문자열로 결합
     details_str = "_".join(rtd_details)
     unique_str = f"{rtd_code}_{rtd_time.strftime('%Y%m%d%H%M%S')}_{rtd_loc}_{details_str}"
     record_id = uuid5(NAMESPACE_DNS, unique_str)
@@ -217,16 +216,18 @@ def get_air_grade():
                 logging.error(f"삽입 실패 ({station}): {e}")
 
         # 통합 데이터 저장 (미세먼지 시도별 측정정보: 71)
-        try:
-            rtd_details = [
-                f"pm10_grade: {pm10_grade}",
-                f"pm25_grade: {pm25_grade}",
-                f"sido: {item.get('sidoName', '')}",
-                f"station: {station}"
-            ]
-            insert_rtd_data(71, dt, station, rtd_details)
-        except Exception as e:
-            logging.error(f"통합 미세먼지 데이터 저장 오류 ({station}): {e}")
+        # pm10_grade 혹은 pm25_grade 중 하나라도 3 이상인 경우에만 저장
+        if pm10_grade >= 3 or pm25_grade >= 3:
+            try:
+                rtd_details = [
+                    f"pm10_grade: {pm10_grade}",
+                    f"pm25_grade: {pm25_grade}",
+                    f"sido: {item.get('sidoName', '')}",
+                    f"station: {station}"
+                ]
+                insert_rtd_data(71, dt, station, rtd_details)
+            except Exception as e:
+                logging.error(f"통합 미세먼지 데이터 저장 오류 ({station}): {e}")
 
     logging.info(f"실시간 대기질 등급 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 처리됨")
     return {"status": "success", "data": items}
@@ -362,7 +363,7 @@ def fetch_typhoon_data():
         formatted_forecast_time = datetime.strptime(forecast_time, "%Y%m%d%H%M")
         formatted_forecast_time = formatted_forecast_time.replace(tzinfo=korea_timezone).astimezone(timezone.utc)
 
-        # 태풍 정보 추출 (필드명은 실제 API 응답에 맞춰 조정하세요)
+        # 태풍 정보 추출 (필드명은 실제 API 응답에 맞춰 조정)
         name = item.findtext('typName')         # 태풍 이름
         direction = item.findtext('typDir')       # 진행 방향
         lat_str = item.findtext('typLat')         # 위도
@@ -535,7 +536,6 @@ class DisasterMessageCrawler:
             get_typhoon_data()
             logging.info("전체 수집 완료")
         elif cmd == "6":
-            # ★ 태풍 정보만 단독으로 수집하는 명령어 추가
             logging.info("태풍 정보 수집 시작")
             get_typhoon_data()
             logging.info("태풍 정보 수집 완료")
@@ -552,7 +552,7 @@ class DisasterMessageCrawler:
         print(" 3 → 실시간 미세먼지 수집")
         print(" 4 → 지진 정보 수집")
         print(" 5 → 전체 수집 (대기 예보 + 미세먼지 + 지진 + 태풍)")
-        print(" 6 → 태풍 정보 수집")  # ★ 도움말에 태풍 명령 추가
+        print(" 6 → 태풍 정보 수집")
         print(" ? → 명령어 도움말")
         print(" q 또는 exit → 종료")
 
