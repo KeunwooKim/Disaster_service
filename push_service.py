@@ -6,6 +6,7 @@ from cassandra.cluster import Cluster
 from cassandra.auth import PlainTextAuthProvider
 import os
 from dotenv import load_dotenv
+from typing import Optional
 
 # 환경 변수 로드 (.env 파일 활용)
 load_dotenv()
@@ -68,35 +69,69 @@ def get_test_events():
 
 
 @app.get("/rtd/search")
-def search_rtd(rtd_code: int, rtd_loc: str):
+def search_rtd(rtd_code: Optional[int] = None, rtd_loc: Optional[str] = None):
     """
-    rtd_db 테이블에서 재난 유형(rtd_code)과 재난 장소(rtd_loc)를 기준으로
+    rtd_db 테이블에서 재난 유형(rtd_code) 또는 재난 장소(rtd_loc)를 기준으로
     데이터를 검색하여 JSON으로 반환하는 엔드포인트입니다.
 
-    주의: Cassandra에서는 문자열 검색 시 ALLOW FILTERING을 사용하므로,
+    두 조건 중 하나만 제공되어도 해당 조건에 맞는 데이터를 반환합니다.
+    Cassandra에서는 문자열 검색 시 ALLOW FILTERING을 사용하므로,
     프로덕션 환경에서는 적절한 인덱싱이나 데이터 모델링이 필요합니다.
     """
-    try:
-        query = """
-            SELECT rtd_code, rtd_time, id, rtd_loc, rtd_details 
-            FROM rtd_db 
-            WHERE rtd_code = %s AND rtd_loc = %s ALLOW FILTERING
-        """
-        rows = session.execute(query, (rtd_code, rtd_loc))
-        results = []
-        for row in rows:
-            result = {
-                "rtd_code": row.rtd_code,
-                "rtd_time": row.rtd_time.isoformat() if row.rtd_time else None,
-                "id": str(row.id),
-                "rtd_loc": row.rtd_loc,
-                "rtd_details": row.rtd_details  # 리스트로 저장되어 있다면 그대로 반환
-            }
-            results.append(result)
-        return JSONResponse(content={"results": results, "count": len(results)})
-    except Exception as e:
-        logging.error(f"rtd_db 검색 에러: {e}")
-        raise HTTPException(status_code=500, detail="rtd_db 검색 실패")
+    if rtd_code is None and rtd_loc is None:
+        raise HTTPException(
+            status_code=400,
+            detail="검색 조건인 재난 유형(rtd_code) 또는 재난 장소(rtd_loc) 중 하나를 제공해주세요."
+        )
+    results = []
+    seen_ids = set()
+    # rtd_code 조건 검색
+    if rtd_code is not None:
+        try:
+            query = """
+                SELECT rtd_code, rtd_time, id, rtd_loc, rtd_details 
+                FROM rtd_db 
+                WHERE rtd_code = %s ALLOW FILTERING
+            """
+            rows = session.execute(query, (rtd_code,))
+            for row in rows:
+                row_id = str(row.id)
+                if row_id not in seen_ids:
+                    results.append({
+                        "rtd_code": row.rtd_code,
+                        "rtd_time": row.rtd_time.isoformat() if row.rtd_time else None,
+                        "id": row_id,
+                        "rtd_loc": row.rtd_loc,
+                        "rtd_details": row.rtd_details
+                    })
+                    seen_ids.add(row_id)
+        except Exception as e:
+            logging.error(f"rtd_db 검색 에러 (rtd_code): {e}")
+            raise HTTPException(status_code=500, detail="rtd_db 검색 실패 (rtd_code)")
+    # rtd_loc 조건 검색
+    if rtd_loc is not None:
+        try:
+            query = """
+                SELECT rtd_code, rtd_time, id, rtd_loc, rtd_details 
+                FROM rtd_db 
+                WHERE rtd_loc = %s ALLOW FILTERING
+            """
+            rows = session.execute(query, (rtd_loc,))
+            for row in rows:
+                row_id = str(row.id)
+                if row_id not in seen_ids:
+                    results.append({
+                        "rtd_code": row.rtd_code,
+                        "rtd_time": row.rtd_time.isoformat() if row.rtd_time else None,
+                        "id": row_id,
+                        "rtd_loc": row.rtd_loc,
+                        "rtd_details": row.rtd_details
+                    })
+                    seen_ids.add(row_id)
+        except Exception as e:
+            logging.error(f"rtd_db 검색 에러 (rtd_loc): {e}")
+            raise HTTPException(status_code=500, detail="rtd_db 검색 실패 (rtd_loc)")
+    return JSONResponse(content={"results": results, "count": len(results)})
 
 
 if __name__ == "__main__":
