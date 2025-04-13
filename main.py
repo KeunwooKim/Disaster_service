@@ -918,8 +918,8 @@ def main():
     logging.info("데이터 수집 시작")
 
     # 스케줄러에 작업 등록 (기본 주기: 초 단위)
-    scheduler.add_task("air_inform", 3600, get_air_inform)  # 대기 예보: 1시간
-    scheduler.add_task("air_grade", 300, get_air_grade)  # 실시간 미세먼지: 5분
+    scheduler.add_task("air_inform", 36000, get_air_inform)  # 대기 예보: 10시간
+    scheduler.add_task("air_grade", 36000, get_air_grade)  # 실시간 미세먼지: 10시간
     scheduler.add_task("earthquake", 600, fetch_earthquake_data)  # 지진: 10분
     scheduler.add_task("typhoon", 3600, get_typhoon_data)  # 태풍: 1시간
     scheduler.add_task("flood", 600, get_flood_data)  # 홍수: 10분
