@@ -47,6 +47,19 @@ def get_all_tables(connector):
         return []
 
 
+def get_next_page(iterator, page_size):
+    """
+    지정된 iterator에서 page_size 만큼의 row를 가져옵니다.
+    """
+    next_page = []
+    for _ in range(page_size):
+        try:
+            next_page.append(next(iterator))
+        except StopIteration:
+            break
+    return next_page
+
+
 def interactive_view_table(connector, table_name, page_size=50):
     """
     지정된 테이블의 데이터를 페이지 단위로 조회하는 함수입니다.
@@ -54,16 +67,17 @@ def interactive_view_table(connector, table_name, page_size=50):
     사용자가:
       - 'n'을 입력하면 다음 페이지,
       - 'b'를 입력하면 이전 페이지,
+      - 'f'를 입력하면 현재 페이지 내에서 검색,
       - '?'를 입력하면 현재 keyspace 내의 테이블 목록을 출력,
       - 'q'를 입력하면 페이지 조회를 종료합니다.
     """
     query = f"SELECT * FROM {table_name};"
     stmt = SimpleStatement(query, fetch_size=page_size)
     result_set = connector.session.execute(stmt)
-    # iterator를 이용해 페이지 단위로 가져옴
     iterator = iter(result_set)
+
     pages = []
-    first_page = list(itertools.islice(iterator, page_size))
+    first_page = get_next_page(iterator, page_size)
     if not first_page:
         print("해당 테이블에 데이터가 없습니다.")
         return
@@ -76,11 +90,11 @@ def interactive_view_table(connector, table_name, page_size=50):
         print("=" * 50)
         for row in pages[current_page_index]:
             print(row)
-        print("\n명령: n (다음 페이지), b (이전 페이지), ? (테이블 목록 보기), q (종료)")
+        print("\n명령: n (다음 페이지), b (이전 페이지), f (현재 페이지 검색), ? (테이블 목록 보기), q (종료)")
         cmd = input("명령을 입력하세요: ").strip().lower()
 
         if cmd == "n":
-            next_page = list(itertools.islice(iterator, page_size))
+            next_page = get_next_page(iterator, page_size)
             if next_page:
                 pages.append(next_page)
                 current_page_index += 1
@@ -91,6 +105,17 @@ def interactive_view_table(connector, table_name, page_size=50):
                 current_page_index -= 1
             else:
                 print("이전 페이지가 없습니다.")
+        elif cmd == "f":
+            search_term = input("검색어: ").strip().lower()
+            # 현재 페이지의 각 행을 문자열로 변환하여 검색어 포함 여부를 확인합니다.
+            filtered = [row for row in pages[current_page_index] if search_term in str(row).lower()]
+            if filtered:
+                print("\n=== 검색 결과 ===")
+                for row in filtered:
+                    print(row)
+                print("================\n")
+            else:
+                print("현재 페이지에서 검색 결과가 없습니다.")
         elif cmd == "q":
             break
         elif cmd == "?":
@@ -167,7 +192,7 @@ def main():
         # 조회 후 전체 테이블 목록으로 복구
         current_tables = all_tables.copy()
         display_tables(current_tables)
-        print("\n다른 테이블을 조회하려면 테이블명 또는 번호를, 검색하려면 's', 테이블 목록 보려면 '?', 종료하려면 'q'를 입력하세요.")
+        print("\n다른 테이블을 조회하려면 테이블명 또는 번호를, 검색하려면 's', 테이블 목록 보려면 '?' , 종료하려면 'q'를 입력하세요.")
 
 
 if __name__ == "__main__":
