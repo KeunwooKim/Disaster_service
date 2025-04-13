@@ -653,6 +653,8 @@ class DisasterMessageCrawler:
             "domestic_earthquake",
             "domestic_typhoon",
             "disaster_message",
+            "forecastannouncement",
+            "realtimeflood",
             "rtd_db"
         ]:
             result = connector.session.execute(SimpleStatement(f"SELECT count(*) FROM {table};"))
