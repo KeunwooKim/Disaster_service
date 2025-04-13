@@ -17,6 +17,9 @@ from cassandra.cluster import Cluster
 from cassandra.auth import PlainTextAuthProvider
 from cassandra.query import SimpleStatement
 
+# ★ 추가된 부분: BeautifulSoup 임포트
+from bs4 import BeautifulSoup
+
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -58,13 +61,16 @@ class CassandraConnector:
 
 connector = CassandraConnector()
 
-
 def insert_rtd_data(rtd_code: int, rtd_time: datetime, rtd_loc: str, rtd_details: list):
     """
     통합 데이터 테이블(rtd_db)에 데이터를 저장하는 함수입니다.
     결정론적 id 생성을 위해 uuid5를 사용합니다.
     """
     details_str = "_".join(rtd_details)
+    # rtd_time이 None이 되지 않도록 주의
+    if not rtd_time:
+        rtd_time = datetime.now(timezone.utc)
+
     unique_str = f"{rtd_code}_{rtd_time.strftime('%Y%m%d%H%M%S')}_{rtd_loc}_{details_str}"
     record_id = uuid5(NAMESPACE_DNS, unique_str)
 
@@ -73,7 +79,10 @@ def insert_rtd_data(rtd_code: int, rtd_time: datetime, rtd_loc: str, rtd_details
     VALUES (%s, %s, %s, %s, %s) IF NOT EXISTS
     """
     try:
-        connector.session.execute(SimpleStatement(query), (rtd_code, rtd_time, record_id, rtd_loc, rtd_details))
+        connector.session.execute(
+            SimpleStatement(query),
+            (rtd_code, rtd_time, record_id, rtd_loc, rtd_details)
+        )
         logging.info(f"통합 데이터 저장 성공: {record_id} (코드: {rtd_code})")
     except Exception as e:
         logging.error(f"통합 데이터 저장 실패 (코드: {rtd_code}): {e}")
@@ -92,7 +101,8 @@ def get_air_inform():
         "serviceKey": API_KEY
     }
     try:
-        response = requests.get("http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth", params=params, timeout=10)
+        response = requests.get("http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth",
+                                params=params, timeout=10)
         response.raise_for_status()
         logging.info("대기질 예보 API 연결 확인")
     except Exception as e:
@@ -120,16 +130,19 @@ def get_air_inform():
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s) IF NOT EXISTS
         """
         try:
-            connector.session.execute(SimpleStatement(query), (
-                record_id,
-                item.get("informCause", ""),
-                item.get("informCode", ""),
-                data_time,
-                forecast_date,
-                item.get("informGrade", ""),
-                item.get("informOverall", ""),
-                datetime.now().date()
-            ))
+            connector.session.execute(
+                SimpleStatement(query),
+                (
+                    record_id,
+                    item.get("informCause", ""),
+                    item.get("informCode", ""),
+                    data_time,
+                    forecast_date,
+                    item.get("informGrade", ""),
+                    item.get("informOverall", ""),
+                    datetime.now().date()
+                )
+            )
             saved_count += 1
 
             # 통합 데이터 저장 (대기질 예보: 72)
@@ -143,8 +156,10 @@ def get_air_inform():
             insert_rtd_data(72, data_time, "", rtd_details)
         except Exception as e:
             logging.error(f"DB 저장 실패 (record_id: {record_id}): {e}")
+
     logging.info(f"대기질 예보 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 저장됨")
     return {"status": "success", "data": items}
+
 
 # 2. 실시간 대기질 등급 수집 및 저장 (rtd_code 71)
 def get_air_grade():
@@ -158,7 +173,10 @@ def get_air_grade():
         "ver": "1.3"
     }
     try:
-        response = requests.get("http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty", params=params, timeout=10)
+        response = requests.get(
+            "http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty",
+            params=params, timeout=10
+        )
         response.raise_for_status()
         logging.info("실시간 미세먼지 API 연결 확인")
     except Exception as e:
@@ -178,7 +196,8 @@ def get_air_grade():
             continue
 
         try:
-            dt = datetime.strptime(item["dataTime"], "%Y-%m-%d %H:%M").replace(tzinfo=korea_tz).astimezone(timezone.utc)
+            dt = datetime.strptime(item["dataTime"], "%Y-%m-%d %H:%M") \
+                         .replace(tzinfo=korea_tz).astimezone(timezone.utc)
         except Exception:
             dt = datetime.utcnow()
 
@@ -186,31 +205,47 @@ def get_air_grade():
         check_query = "SELECT pm_no FROM airgrade WHERE stationname=%s ALLOW FILTERING"
         result = connector.session.execute(SimpleStatement(check_query), (station,))
         row = result.one()
+
         pm10_grade = int(item.get("pm10Grade1h") or 0)
         pm25_grade = int(item.get("pm25Grade1h") or 0)
+
         if row:
-            update = "UPDATE airgrade SET data_time=%s, pm10_grade=%s, pm25_grade=%s, sido=%s WHERE pm_no=%s"
+            update = """
+            UPDATE airgrade
+            SET data_time=%s, pm10_grade=%s, pm25_grade=%s, sido=%s
+            WHERE pm_no=%s
+            """
             try:
-                connector.session.execute(SimpleStatement(update), (
-                    dt,
-                    pm10_grade,
-                    pm25_grade,
-                    item.get("sidoName", ""),
-                    row.pm_no
-                ))
+                connector.session.execute(
+                    SimpleStatement(update),
+                    (
+                        dt,
+                        pm10_grade,
+                        pm25_grade,
+                        item.get("sidoName", ""),
+                        row.pm_no
+                    )
+                )
                 saved_count += 1
             except Exception as e:
                 logging.error(f"업데이트 실패 ({station}): {e}")
         else:
-            insert = "INSERT INTO airgrade (pm_no, data_time, pm10_grade, pm25_grade, sido, stationname) VALUES (%s, %s, %s, %s, %s, %s)"
+            insert = """
+            INSERT INTO airgrade (pm_no, data_time, pm10_grade, pm25_grade, sido, stationname)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """
             try:
-                connector.session.execute(SimpleStatement(insert), (
-                    uuid4(), dt,
-                    pm10_grade,
-                    pm25_grade,
-                    item.get("sidoName", ""),
-                    station
-                ))
+                connector.session.execute(
+                    SimpleStatement(insert),
+                    (
+                        uuid4(),
+                        dt,
+                        pm10_grade,
+                        pm25_grade,
+                        item.get("sidoName", ""),
+                        station
+                    )
+                )
                 saved_count += 1
             except Exception as e:
                 logging.error(f"삽입 실패 ({station}): {e}")
@@ -232,6 +267,7 @@ def get_air_grade():
     logging.info(f"실시간 대기질 등급 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 처리됨")
     return {"status": "success", "data": items}
 
+
 # 3. 지진 정보 수집 및 저장 (rtd_code 51)
 def fetch_earthquake_data():
     logging.info("지진 정보 수집 시작")
@@ -248,6 +284,7 @@ def fetch_earthquake_data():
         logging.error(f"지진 API 오류: {e}")
         return
 
+    # 최신 지진 시간 조회
     try:
         max_time_result = connector.session.execute("SELECT eq_time FROM domestic_earthquake LIMIT 1")
         max_time_row = max_time_result.one()
@@ -270,12 +307,16 @@ def fetch_earthquake_data():
         if len(tokens) < 7:
             continue
         tp = tokens[0]
+        # tp=3 → 국내 지진 (기상청 API 문서 기준)
         if tp != "3":
             continue
 
         try:
             tm_eqk = tokens[3]
-            dt = datetime.strptime(tm_eqk[:14], "%Y%m%d%H%M%S").replace(tzinfo=kst).astimezone(timezone.utc)
+            dt = datetime.strptime(tm_eqk[:14], "%Y%m%d%H%M%S") \
+                         .replace(tzinfo=kst).astimezone(timezone.utc)
+
+            # 이미 저장된 시간보다 과거면 스킵
             if latest_eq_time is not None and dt <= latest_eq_time:
                 logging.info(f"이미 저장된 최신 eq_time({latest_eq_time})보다 이전이므로 저장 안 함: {dt}")
                 continue
@@ -285,14 +326,19 @@ def fetch_earthquake_data():
             lon_num = float(tokens[6])
             location = " ".join(tokens[7:])
             msg = f"[{location}] 규모 {magnitude}"
+
             record_str = f"{dt.strftime('%Y%m%d%H%M%S')}_{lat_num}_{lon_num}_{magnitude}"
             record_id = uuid5(NAMESPACE_DNS, record_str)
             logging.info(f"생성된 record_id: {record_id} (type: {type(record_id)})")
+
             insert_stmt = """
-                INSERT INTO domestic_earthquake (eq_no, eq_time, eq_lat, eq_lot, eq_mag, eq_msg)
-                VALUES (%s, %s, %s, %s, %s, %s) IF NOT EXISTS
+            INSERT INTO domestic_earthquake (eq_no, eq_time, eq_lat, eq_lot, eq_mag, eq_msg)
+            VALUES (%s, %s, %s, %s, %s, %s) IF NOT EXISTS
             """
-            connector.session.execute(SimpleStatement(insert_stmt), (record_id, dt, lat_num, lon_num, magnitude, msg))
+            connector.session.execute(
+                SimpleStatement(insert_stmt),
+                (record_id, dt, lat_num, lon_num, magnitude, msg)
+            )
             saved_count += 1
 
             # 통합 데이터 저장 (지진: 51)
@@ -303,9 +349,12 @@ def fetch_earthquake_data():
                 f"longitude: {lon_num}"
             ]
             insert_rtd_data(51, dt, location, rtd_details)
+
         except Exception as e:
             logging.error(f"지진 파싱 오류 (row: {row}): {e}")
+
     logging.info(f"지진 정보 저장 완료: 총 {total_rows} 행 중 {saved_count}건 저장됨")
+
 
 # ----------------------------------------------------
 # 4. 태풍 데이터 (rtd_code 31)
@@ -363,14 +412,14 @@ def fetch_typhoon_data():
         formatted_forecast_time = datetime.strptime(forecast_time, "%Y%m%d%H%M")
         formatted_forecast_time = formatted_forecast_time.replace(tzinfo=korea_timezone).astimezone(timezone.utc)
 
-        # 태풍 정보 추출 (필드명은 실제 API 응답에 맞춰 조정)
-        name = item.findtext('typName')         # 태풍 이름
-        direction = item.findtext('typDir')       # 진행 방향
-        lat_str = item.findtext('typLat')         # 위도
-        lon_str = item.findtext('typLon')         # 경도
-        loc = item.findtext('typLoc')             # 위치
-        intensity = item.findtext('typInt')       # 강도 (예: "중", "강", "매우강")
-        wind_str = item.findtext('typ15')         # 강풍 반경(15m/s)
+        # 태풍 정보 추출
+        name = item.findtext('typName')       # 태풍 이름
+        direction = item.findtext('typDir')   # 진행 방향
+        lat_str = item.findtext('typLat')     # 위도
+        lon_str = item.findtext('typLon')     # 경도
+        loc = item.findtext('typLoc')         # 위치
+        intensity = item.findtext('typInt')   # 강도 (예: "중", "강", "매우강")
+        wind_str = item.findtext('typ15')     # 강풍 반경(15m/s)
 
         try:
             lat = float(lat_str) if lat_str else 0.0
@@ -460,7 +509,10 @@ def get_typhoon_data():
 
     logging.info(f"태풍 정보 저장 완료: 총 {len(data)}건 중 {saved_count}건 저장됨")
 
+
+# ----------------------------------------------------
 # 5. 재난문자 크롤러 (재난소식 - 문자: 21)
+# ----------------------------------------------------
 class DisasterMessageCrawler:
     def __init__(self):
         chrome_driver_path = '/usr/local/bin/chromedriver'
@@ -475,19 +527,32 @@ class DisasterMessageCrawler:
         self.seen_ids = set()
 
     def message_exists(self, msg_id):
-        result = self.session.execute("SELECT message_id FROM disaster_message WHERE message_id = %s", (msg_id,))
+        result = self.session.execute(
+            "SELECT message_id FROM disaster_message WHERE message_id = %s", (msg_id,)
+        )
         return result.one() is not None
 
     def backup_messages(self, messages):
         for msg in messages:
             try:
                 self.session.execute(SimpleStatement("""
-                    INSERT INTO disaster_message (message_id, emergency_level, DM_ntype, DM_stype,
-                    issuing_agency, issued_at, message_content)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s) IF NOT EXISTS
+                    INSERT INTO disaster_message (
+                        message_id,
+                        emergency_level,
+                        DM_ntype,
+                        DM_stype,
+                        issuing_agency,
+                        issued_at,
+                        message_content
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s) IF NOT EXISTS
                 """), (
-                    msg['message_id'], msg['emergency_level'], msg['DM_ntype'], msg['DM_stype'],
-                    msg['issuing_agency'], msg['issued_at'], msg['message_content']
+                    msg['message_id'],
+                    msg['emergency_level'],
+                    msg['DM_ntype'],
+                    msg['DM_stype'],
+                    msg['issuing_agency'],
+                    msg['issued_at'],
+                    msg['message_content']
                 ))
                 logging.info(f"메시지 저장됨: {msg['message_id']}")
 
@@ -504,7 +569,14 @@ class DisasterMessageCrawler:
 
     def show_status(self):
         print("=== 저장 현황 ===")
-        for table in ["airinform", "airgrade", "domestic_earthquake", "domestic_typhoon", "disaster_message", "rtd_db"]:
+        for table in [
+            "airinform",
+            "airgrade",
+            "domestic_earthquake",
+            "domestic_typhoon",
+            "disaster_message",
+            "rtd_db"
+        ]:
             result = connector.session.execute(f"SELECT count(*) FROM {table};")
             for row in result:
                 print(f"{table}: {row.count}건")
@@ -539,6 +611,11 @@ class DisasterMessageCrawler:
             logging.info("태풍 정보 수집 시작")
             get_typhoon_data()
             logging.info("태풍 정보 수집 완료")
+        # ★ 추가: 홍수 정보 수집 (7)
+        elif cmd == "7":
+            logging.info("홍수 정보 수집 시작")
+            get_flood_data()
+            logging.info("홍수 정보 수집 완료")
         elif cmd == "?":
             self.display_help()
         else:
@@ -553,6 +630,7 @@ class DisasterMessageCrawler:
         print(" 4 → 지진 정보 수집")
         print(" 5 → 전체 수집 (대기 예보 + 미세먼지 + 지진 + 태풍)")
         print(" 6 → 태풍 정보 수집")
+        print(" 7 → 홍수 정보 수집")  # 추가
         print(" ? → 명령어 도움말")
         print(" q 또는 exit → 종료")
 
@@ -577,7 +655,7 @@ class DisasterMessageCrawler:
                         self.backup_messages(messages)
                     else:
                         logging.info("신규 메시지 없음")
-                        print("60초 대기 중... (명령어 입력 가능: 1~6, q 등)")
+                        print("60초 대기 중... (명령어 입력 가능: 1~7, q 등)")
                     last_check_time = time.time()
                 time.sleep(1)
             except Exception as e:
@@ -604,12 +682,121 @@ class DisasterMessageCrawler:
                         self.driver.find_element(By.ID, f"disasterSms_tr_{i}_CREATE_DT").text,
                         "%Y/%m/%d %H:%M:%S"
                     ),
-                    "message_content": self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_CN").get_attribute("title")
+                    "message_content": self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_CN")
+                                                 .get_attribute("title")
                 })
             except Exception as e:
                 logging.error(f"메시지 추출 오류 (인덱스 {i}): {e}")
                 continue
         return messages
+
+
+# ----------------------------------------------------
+# 6. 홍수 데이터 (rtd_code 33)
+# ----------------------------------------------------
+FLOOD_CODE = 33
+FLOOD_URL = (
+    "https://www.water.or.kr/kor/flood/floodwarning/index.do?mode=list&types=1&menuId=16_166_170_172"
+)
+
+def fetch_flood_data():
+    """홍수 데이터를 크롤링하여 수집 (BeautifulSoup)"""
+    response = requests.get(FLOOD_URL)
+    if response.status_code != 200:
+        logging.error(f"홍수 데이터 페이지 응답 오류: {response.status_code}")
+        return []
+
+    soup = BeautifulSoup(response.text, 'html.parser')
+    table = soup.find('table', class_='basic_table')
+    if not table or not table.find('tbody'):
+        logging.info("홍수 테이블 또는 tbody를 찾을 수 없습니다.")
+        return []
+
+    rows = table.find('tbody').find_all('tr')
+    flood_data = []
+    for row in rows:
+        cells = row.find_all('td')
+        if cells and len(cells) >= 7:
+            region = cells[0].text.strip()            # 지역
+            current_level = cells[1].text.strip()     # 현재 수위
+            advisory_level = cells[2].text.strip()    # 주의보 수위
+            warning_level = cells[3].text.strip()     # 경보 수위
+            flow_rate = cells[4].text.strip()         # 유량
+            alert_status = cells[5].text.strip()      # 예경보 현황
+            issued_time = cells[6].text.strip()       # 발령 일시 (yyyy-MM-dd HH:mm)
+
+            # 시간 변환 (KST → UTC)
+            korea_timezone = timezone(timedelta(hours=9))
+            try:
+                formatted_issued_time = datetime.strptime(
+                    issued_time, "%Y-%m-%d %H:%M"
+                ).replace(tzinfo=korea_timezone).astimezone(timezone.utc)
+            except Exception:
+                formatted_issued_time = datetime.now(timezone.utc)
+
+            flood_data.append({
+                "rtd_code": FLOOD_CODE,
+                "rtd_time": formatted_issued_time,
+                "rtd_loc": region,
+                "rtd_details": [
+                    f"현재 수위: {current_level}m",
+                    f"주의보 수위: {advisory_level}m",
+                    f"경보 수위: {warning_level}m",
+                    f"유량: {flow_rate}㎥/s",
+                    f"예경보 현황: {alert_status}"
+                ]
+            })
+    return flood_data
+
+def get_flood_data():
+    """
+    fetch_flood_data()로부터 홍수 정보를 가져와
+    RealTimeFlood 테이블에 저장한 뒤 rtd_db에도 기록한다.
+    """
+    logging.info("홍수 정보 수집 함수 get_flood_data() 실행")
+    data = fetch_flood_data()
+    if not data:
+        logging.info("새로운 홍수 정보가 없습니다.")
+        return
+
+    saved_count = 0
+    for item in data:
+        # RealTimeFlood에 저장
+        # (실제 스키마명이나 컬럼명은 상황에 맞게 수정 필요)
+        try:
+            # comment 필드 등에 상세 정보 합쳐서 저장 예시
+            comment_str = "; ".join(item["rtd_details"])
+
+            # fld_no 생성 (중복 방지를 위해 uuid5 사용)
+            # rtd_time, 지역, 수위 등으로 결정론적 생성
+            unique_str = f"{item['rtd_time'].strftime('%Y%m%d%H%M')}_{item['rtd_loc']}_{comment_str}"
+            fld_no = uuid5(NAMESPACE_DNS, unique_str)
+
+            insert_flood = """
+            INSERT INTO RealTimeFlood (fld_no, fld_region, fld_alert, fld_time, comment)
+            VALUES (%s, %s, %s, %s, %s)
+            IF NOT EXISTS
+            """
+            # fld_alert 예시: "주의보" or "경보" 등 alert_status를 그대로
+            # 혹은 cells[5]에 따른 로직이 있다면 수정 필요
+            alert_status_str = item["rtd_details"][-1].replace("예경보 현황: ", "")
+            connector.session.execute(
+                SimpleStatement(insert_flood),
+                (fld_no, item["rtd_loc"], alert_status_str, item["rtd_time"], comment_str)
+            )
+            saved_count += 1
+
+            # 통합 데이터 테이블(rtd_db)에 저장
+            insert_rtd_data(
+                item["rtd_code"],
+                item["rtd_time"],
+                item["rtd_loc"],
+                item["rtd_details"]
+            )
+        except Exception as e:
+            logging.error(f"홍수 정보 저장 실패: {e}")
+
+    logging.info(f"홍수 정보 저장 완료: 총 {len(data)}건 중 {saved_count}건 저장됨")
 
 def main():
     logging.info("데이터 수집 시작")
@@ -623,6 +810,12 @@ def main():
     # 4. 태풍 정보
     get_typhoon_data()
 
+    # 5. 홍수 정보
+    logging.info("홍수 정보 수집 시작")
+    get_flood_data()
+    logging.info("홍수 정보 수집 완료")
+
+    # 재난문자 모니터링 시작
     logging.info("재난문자 수집 시작")
     DisasterMessageCrawler().monitor()
 
