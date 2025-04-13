@@ -8,14 +8,16 @@ import select
 import requests
 import xmltodict
 import xml.etree.ElementTree as ET
+import re  # ★ 추가
+from datetime import datetime, timezone, timedelta
 from io import StringIO
 from uuid import uuid4, uuid5, NAMESPACE_DNS
-from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
-from cassandra.cluster import Cluster
-from cassandra.auth import PlainTextAuthProvider
-from cassandra.query import SimpleStatement
+# ★ 추가된 부분: 형태소 분석기
+# Konlpy 설치가 필요합니다. (pip install konlpy)
+from konlpy.tag import Okt
+okt = Okt()
 
 # ★ 추가된 부분: BeautifulSoup 임포트
 from bs4 import BeautifulSoup
@@ -49,7 +51,9 @@ class CassandraConnector:
         for attempt in range(5):
             try:
                 logging.info(f"Cassandra 연결 시도 중... (시도 {attempt + 1}/5)")
+                from cassandra.auth import PlainTextAuthProvider
                 auth_provider = PlainTextAuthProvider(username="andy013", password="1212")
+                from cassandra.cluster import Cluster
                 self.cluster = Cluster(["127.0.0.1"], port=9042, auth_provider=auth_provider)
                 self.session = self.cluster.connect(self.keyspace)
                 logging.info("✅ Cassandra 연결 완료.")
@@ -79,6 +83,7 @@ def insert_rtd_data(rtd_code: int, rtd_time: datetime, rtd_loc: str, rtd_details
     VALUES (%s, %s, %s, %s, %s) IF NOT EXISTS
     """
     try:
+        from cassandra.query import SimpleStatement
         connector.session.execute(
             SimpleStatement(query),
             (rtd_code, rtd_time, record_id, rtd_loc, rtd_details)
@@ -87,8 +92,71 @@ def insert_rtd_data(rtd_code: int, rtd_time: datetime, rtd_loc: str, rtd_details
     except Exception as e:
         logging.error(f"통합 데이터 저장 실패 (코드: {rtd_code}): {e}")
 
+# --------------------------------------------------------------------------------
+# 0. 기상특보(주의보/경보) 수집을 위한 STATION_CODES, WARNING_CODES 설정
+# --------------------------------------------------------------------------------
 
+# 전국의 기상청 지점 코드 (기상청 API 공식 문서 참고)
+STATION_CODES = {
+    90: "속초", 93: "북춘천", 95: "철원", 96: "독도", 98: "동두천",
+    99: "파주", 100: "대관령", 101: "춘천", 102: "백령도", 104: "북강릉",
+    105: "강릉", 106: "동해", 108: "서울", 112: "인천", 114: "원주",
+    115: "울릉도", 116: "관악(레)", 119: "수원", 121: "영월", 127: "충주",
+    129: "서산", 130: "울진", 131: "청주", 133: "대전", 135: "추풍령",
+    136: "안동", 137: "상주", 138: "포항", 140: "군산", 143: "대구",
+    146: "전주", 155: "창원", 156: "광주", 162: "통영", 165: "목포",
+    168: "여수", 169: "흑산도", 170: "완도", 172: "고창", 174: "순천",
+    175: "진도(레)", 177: "홍성", 184: "제주", 185: "고산", 188: "성산",
+    189: "서귀포", 192: "진주", 201: "강화", 202: "양평", 203: "이천",
+    211: "인제", 212: "홍천", 216: "태백", 217: "정선군", 221: "제천",
+    226: "보은", 229: "북격렬비도", 232: "천안", 235: "보령", 236: "부여",
+    238: "금산", 239: "세종", 243: "부안", 244: "임실", 245: "정읍",
+    247: "남원", 248: "장수", 251: "고창군", 252: "영광군", 253: "김해시",
+    254: "순창군", 255: "북창원", 257: "양산시", 258: "보성군", 259: "강진군",
+    260: "장흥", 261: "해남", 262: "고흥", 263: "의령군", 264: "함양군",
+    266: "광양시", 268: "진도군", 271: "봉화", 272: "영주", 273: "문경",
+    276: "청송군", 277: "영덕", 278: "의성", 279: "구미", 281: "영천",
+    283: "경주시", 284: "거창", 285: "합천", 288: "밀양", 289: "산청",
+    294: "거제", 295: "남해", 296: "북부산", 300: "말도", 301: "임자도",
+    302: "장산도", 303: "가거도", 304: "신지도", 305: "여서도", 306: "소리도",
+    308: "옥도", 310: "궁촌", 311: "가야산", 312: "주왕산", 313: "양지암",
+    314: "덕유봉", 315: "성삼재", 316: "무등산", 317: "모악산", 318: "용평",
+    319: "천부", 320: "향로봉", 321: "원통", 322: "상서", 323: "마현",
+    324: "송계", 325: "백운", 326: "용문산", 327: "우암산", 328: "중문",
+    329: "산천단", 330: "대흘", 351: "남면", 352: "장흥면", 353: "덕정동",
+    355: "서탄면", 356: "고덕면", 358: "현덕면", 359: "선단동", 360: "내촌면",
+    361: "영중면", 364: "분당구", 365: "석수동", 366: "오전동", 367: "신현동",
+    368: "수택동", 369: "수리산길", 370: "이동묵리", 371: "기흥구", 372: "은현면",
+    373: "남방", 374: "청북", 375: "백석읍", 400: "강남", 401: "서초",
+    402: "강동", 403: "송파", 404: "강서", 405: "양천", 406: "도봉",
+    407: "노원", 408: "동대문", 409: "중랑", 410: "기상청", 411: "마포",
+    412: "서대문", 413: "광진", 414: "성북", 415: "용산", 416: "은평",
+    417: "금천", 418: "한강", 419: "중구", 421: "성동", 423: "구로",
+    424: "강북", 425: "남현", 426: "백령(레)", 427: "김포장기", 428: "하남덕풍",
+    430: "경기", 431: "신곡", 432: "향남", 433: "부천", 434: "안양",
+    435: "고잔", 436: "역삼", 437: "광명", 438: "군포", 439: "진안",
+    440: "설봉", 441: "김포", 442: "지월", 443: "보개", 444: "하남",
+    445: "의왕", 446: "남촌", 447: "북내", 448: "산북", 449: "옥천",
+    450: "주교", 451: "오남", 452: "신북", 453: "소하", 454: "하봉암",
+    455: "읍내", 456: "연천", 457: "춘궁", 458: "퇴촌", 459: "오포",
+    460: "실촌", 461: "마장", 462: "모가", 463: "흥천", 464: "점동",
+    465: "가남", 466: "금사", 467: "양성", 468: "서운", 469: "일죽",
+    470: "고삼", 471: "송탄", 472: "포승", 473: "가산", 474: "영북",
+    475: "관인", 476: "화현", 477: "상패", 478: "왕징", 479: "장남"
+}
+
+# 재난 코드 매핑 (기상특보용)
+WARNING_CODES = {
+    "호우": 32,
+    "강풍": 34,
+    "대설": 35,
+    "폭염": 41,
+    "한파": 42
+}
+
+# --------------------------------------------------------------------------------
 # 1. 대기질 예보 데이터 수집 및 저장 (rtd_code 72)
+# --------------------------------------------------------------------------------
 def get_air_inform():
     logging.info("대기질 예보 데이터 수집 시작")
     now = datetime.now()
@@ -115,6 +183,8 @@ def get_air_inform():
         items = [items]
     total_items = len(items)
     saved_count = 0
+
+    from cassandra.query import SimpleStatement
 
     for item in items:
         record_id = f"{item.get('informData')}_{item.get('dataTime')}_{item.get('informCode')}"
@@ -160,8 +230,9 @@ def get_air_inform():
     logging.info(f"대기질 예보 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 저장됨")
     return {"status": "success", "data": items}
 
-
+# --------------------------------------------------------------------------------
 # 2. 실시간 대기질 등급 수집 및 저장 (rtd_code 71)
+# --------------------------------------------------------------------------------
 def get_air_grade():
     logging.info("실시간 대기질 등급 데이터 수집 시작")
     params = {
@@ -191,6 +262,8 @@ def get_air_grade():
     total_items = len(items)
     saved_count = 0
     korea_tz = timezone(timedelta(hours=9))
+    from cassandra.query import SimpleStatement
+
     for item in items:
         if item.get("pm10Grade1h") is None and item.get("pm25Grade1h") is None:
             continue
@@ -267,8 +340,9 @@ def get_air_grade():
     logging.info(f"실시간 대기질 등급 데이터 저장 완료: 총 {total_items}건 중 {saved_count}건 처리됨")
     return {"status": "success", "data": items}
 
-
+# --------------------------------------------------------------------------------
 # 3. 지진 정보 수집 및 저장 (rtd_code 51)
+# --------------------------------------------------------------------------------
 def fetch_earthquake_data():
     logging.info("지진 정보 수집 시작")
     kst = timezone(timedelta(hours=9))
@@ -286,6 +360,7 @@ def fetch_earthquake_data():
 
     # 최신 지진 시간 조회
     try:
+        from cassandra.query import SimpleStatement
         max_time_result = connector.session.execute("SELECT eq_time FROM domestic_earthquake LIMIT 1")
         max_time_row = max_time_result.one()
         latest_eq_time = max_time_row.eq_time if max_time_row is not None else None
@@ -355,10 +430,9 @@ def fetch_earthquake_data():
 
     logging.info(f"지진 정보 저장 완료: 총 {total_rows} 행 중 {saved_count}건 저장됨")
 
-
-# ----------------------------------------------------
+# --------------------------------------------------------------------------------
 # 4. 태풍 데이터 (rtd_code 31)
-# ----------------------------------------------------
+# --------------------------------------------------------------------------------
 TYPHOON_CODE = 31
 last_forecast_time = None  # 간단 예시로 전역 변수 사용
 
@@ -461,6 +535,7 @@ def get_typhoon_data():
         logging.info("새로운 태풍 정보가 없습니다.")
         return
 
+    from cassandra.query import SimpleStatement
     saved_count = 0
     for item in data:
         # 중복 방지를 위해 uuid5를 사용 (태풍명+시간+위도+경도 등)
@@ -509,10 +584,9 @@ def get_typhoon_data():
 
     logging.info(f"태풍 정보 저장 완료: 총 {len(data)}건 중 {saved_count}건 저장됨")
 
-
-# ----------------------------------------------------
+# --------------------------------------------------------------------------------
 # 5. 재난문자 크롤러 (재난소식 - 문자: 21)
-# ----------------------------------------------------
+# --------------------------------------------------------------------------------
 class DisasterMessageCrawler:
     def __init__(self):
         chrome_driver_path = '/usr/local/bin/chromedriver'
@@ -527,12 +601,15 @@ class DisasterMessageCrawler:
         self.seen_ids = set()
 
     def message_exists(self, msg_id):
+        from cassandra.query import SimpleStatement
         result = self.session.execute(
-            "SELECT message_id FROM disaster_message WHERE message_id = %s", (msg_id,)
+            SimpleStatement("SELECT message_id FROM disaster_message WHERE message_id = %s"),
+            (msg_id,)
         )
         return result.one() is not None
 
     def backup_messages(self, messages):
+        from cassandra.query import SimpleStatement
         for msg in messages:
             try:
                 self.session.execute(SimpleStatement("""
@@ -568,6 +645,7 @@ class DisasterMessageCrawler:
                 logging.error(f"메시지 저장 오류 ({msg['message_id']}): {e}")
 
     def show_status(self):
+        from cassandra.query import SimpleStatement
         print("=== 저장 현황 ===")
         for table in [
             "airinform",
@@ -577,7 +655,7 @@ class DisasterMessageCrawler:
             "disaster_message",
             "rtd_db"
         ]:
-            result = connector.session.execute(f"SELECT count(*) FROM {table};")
+            result = connector.session.execute(SimpleStatement(f"SELECT count(*) FROM {table};"))
             for row in result:
                 print(f"{table}: {row.count}건")
         print("=================")
@@ -611,11 +689,14 @@ class DisasterMessageCrawler:
             logging.info("태풍 정보 수집 시작")
             get_typhoon_data()
             logging.info("태풍 정보 수집 완료")
-        # ★ 추가: 홍수 정보 수집 (7)
         elif cmd == "7":
             logging.info("홍수 정보 수집 시작")
             get_flood_data()
             logging.info("홍수 정보 수집 완료")
+        elif cmd == "8":
+            logging.info("주의보 정보 수집 시작")
+            get_warning_data()
+            logging.info("주의보 정보 수집 완료")
         elif cmd == "?":
             self.display_help()
         else:
@@ -630,7 +711,8 @@ class DisasterMessageCrawler:
         print(" 4 → 지진 정보 수집")
         print(" 5 → 전체 수집 (대기 예보 + 미세먼지 + 지진 + 태풍)")
         print(" 6 → 태풍 정보 수집")
-        print(" 7 → 홍수 정보 수집")  # 추가
+        print(" 7 → 홍수 정보 수집")
+        print(" 8 → 기상특보(주의보/경보) 정보 수집")  # 추가
         print(" ? → 명령어 도움말")
         print(" q 또는 exit → 종료")
 
@@ -655,7 +737,7 @@ class DisasterMessageCrawler:
                         self.backup_messages(messages)
                     else:
                         logging.info("신규 메시지 없음")
-                        print("60초 대기 중... (명령어 입력 가능: 1~7, q 등)")
+                        print("60초 대기 중... (명령어 입력 가능: 1~8, q 등)")
                     last_check_time = time.time()
                 time.sleep(1)
             except Exception as e:
@@ -690,10 +772,9 @@ class DisasterMessageCrawler:
                 continue
         return messages
 
-
-# ----------------------------------------------------
+# --------------------------------------------------------------------------------
 # 6. 홍수 데이터 (rtd_code 33)
-# ----------------------------------------------------
+# --------------------------------------------------------------------------------
 FLOOD_CODE = 33
 FLOOD_URL = (
     "https://www.water.or.kr/kor/flood/floodwarning/index.do?mode=list&types=1&menuId=16_166_170_172"
@@ -759,16 +840,11 @@ def get_flood_data():
         logging.info("새로운 홍수 정보가 없습니다.")
         return
 
+    from cassandra.query import SimpleStatement
     saved_count = 0
     for item in data:
-        # RealTimeFlood에 저장
-        # (실제 스키마명이나 컬럼명은 상황에 맞게 수정 필요)
         try:
-            # comment 필드 등에 상세 정보 합쳐서 저장 예시
             comment_str = "; ".join(item["rtd_details"])
-
-            # fld_no 생성 (중복 방지를 위해 uuid5 사용)
-            # rtd_time, 지역, 수위 등으로 결정론적 생성
             unique_str = f"{item['rtd_time'].strftime('%Y%m%d%H%M')}_{item['rtd_loc']}_{comment_str}"
             fld_no = uuid5(NAMESPACE_DNS, unique_str)
 
@@ -777,8 +853,6 @@ def get_flood_data():
             VALUES (%s, %s, %s, %s, %s)
             IF NOT EXISTS
             """
-            # fld_alert 예시: "주의보" or "경보" 등 alert_status를 그대로
-            # 혹은 cells[5]에 따른 로직이 있다면 수정 필요
             alert_status_str = item["rtd_details"][-1].replace("예경보 현황: ", "")
             connector.session.execute(
                 SimpleStatement(insert_flood),
@@ -798,6 +872,172 @@ def get_flood_data():
 
     logging.info(f"홍수 정보 저장 완료: 총 {len(data)}건 중 {saved_count}건 저장됨")
 
+# --------------------------------------------------------------------------------
+# 7. 기상특보(주의보/경보) 수집 (rtd_code는 WARNING_CODES 사용)
+# --------------------------------------------------------------------------------
+def fetch_warning_data():
+    """전국의 주의보 데이터를 기상청 API에서 수집"""
+    current_date = datetime.now().strftime('%Y%m%d')
+    all_warnings = []  # 모든 지역의 데이터를 저장할 리스트
+
+    for stn_id, region in STATION_CODES.items():
+        url = 'http://apis.data.go.kr/1360000/WthrWrnInfoService/getWthrWrnList'
+        params = {
+            'serviceKey': 'D0I8CLciGzwIaBmM6g6XitlVfgkLBO83zDl4EnUUoxifvRlSZHu78BqoixtzJg17Gb06up+NHzPXjN0cA7sLOg==',
+            'pageNo': '1',
+            'numOfRows': '10',
+            'dataType': 'XML',
+            'stnId': str(stn_id),
+            'fromTmFc': current_date,
+            'toTmFc': current_date
+        }
+
+        response = requests.get(url, params=params)
+        root = ET.fromstring(response.content)
+
+        # 데이터 유효성 확인
+        result_code = root.find('.//resultCode')
+        if result_code is not None and result_code.text == '03':
+            # '03' = 해당 지역에 특보 데이터 없음
+            continue
+
+        # XML에서 title 태그의 내용만 추출
+        titles = [item.find('title').text for item in root.findall('.//item') if item.find('title') is not None]
+
+        warnings = preprocess_alert_data(titles, region)
+        all_warnings.extend(warnings)
+
+    return all_warnings
+
+def preprocess_alert_data(titles, region):
+    """특보 데이터를 정제하여 파싱"""
+    processed_data = []
+
+    for title in titles:
+        # "[특보]" 삭제
+        title = re.sub(r'\[특보\]\s*', '', title)
+
+        # '제XX호 :' 패턴 제거 (예: '제2023-10호 :' 등)
+        title = re.sub(r'제\d+-\d+호\s*:\s*', '', title)
+
+        # 날짜와 특보 상태로 나누기 (예: '2024.09.02.17:00 / 호우주의보 발표')
+        parts = title.split(' / ')
+        if len(parts) != 2:
+            continue
+
+        date_str, alert_info = parts
+
+        # 날짜 형식 변환 (예: '2024.09.02.17:00' → '2024-09-02 17:00')
+        date_str = re.sub(r'(\d{4})\.(\d{2})\.(\d{2})\.(\d{2}):(\d{2})', r'\1-\2-\3 \4:\5', date_str)
+
+        # 형태소 분석으로 alert_info 분리
+        words = okt.morphs(alert_info)
+
+        # 주의보/경보 종류 추출 및 상태 추출
+        alert_types = []
+        alert_status = ''
+
+        for i in range(len(words)):
+            if '주의보' in words[i] or '경보' in words[i]:
+                # 앞 단어가 '호우', '강풍', '대설', '폭염', '한파' 등을 의미할 수 있음
+                if i - 1 >= 0:
+                    alert_type = words[i-1]
+                    if alert_type in WARNING_CODES and alert_type not in alert_types:
+                        alert_types.append(alert_type)
+            elif len(words[i]) == 2:
+                # 두 글자 상태 (예: 발효, 해제 등)
+                alert_status = words[i]
+
+        # KST -> UTC 변환
+        korea_timezone = timezone(timedelta(hours=9))
+        try:
+            formatted_date = datetime.strptime(date_str, "%Y-%m-%d %H:%M") \
+                                     .replace(tzinfo=korea_timezone).astimezone(timezone.utc)
+        except:
+            # 형식이 다를 경우 현재 시간으로 대체
+            formatted_date = datetime.now(timezone.utc)
+
+        # 재난 코드가 존재하는 경우에만 저장
+        for alert in alert_types:
+            processed_data.append({
+                "rtd_code": WARNING_CODES[alert],  # ex) 호우=32, 강풍=34, ...
+                "rtd_time": formatted_date,
+                "rtd_loc": region,
+                "rtd_details": [f"{alert} {alert_status}"]  # 예: '호우 발효'
+            })
+
+    return processed_data
+
+def get_warning_data():
+    """
+    fetch_warning_data()로 수집한 기상특보(주의보/경보) 정보를
+    ForecastAnnouncement 테이블과 rtd_db 테이블에 저장한다.
+    """
+    logging.info("주의보 정보 수집 함수 get_warning_data() 실행")
+    data = fetch_warning_data()
+    if not data:
+        logging.info("새로운 주의보 정보가 없습니다.")
+        return
+
+    from cassandra.query import SimpleStatement
+    saved_count = 0
+    for item in data:
+        rtd_code = item['rtd_code']
+        rtd_time = item['rtd_time']
+        rtd_loc = item['rtd_loc']
+        rtd_details = item['rtd_details']  # 예: ['호우 발효']
+
+        # rtd_details[0]에서 alert_type, alert_stat 분리 (예: "호우 발효")
+        if len(rtd_details) > 0:
+            splitted = rtd_details[0].split()
+            if len(splitted) == 2:
+                alert_type, alert_stat = splitted
+            else:
+                alert_type = splitted[0]
+                alert_stat = "정보없음"
+        else:
+            alert_type = "정보없음"
+            alert_stat = "정보없음"
+
+        # ForecastAnnouncement에 저장
+        # announce_no (UUID, PK), disaster_region, alert_type, alert_stat, announce_time, comment
+        unique_str = f"{rtd_loc}_{alert_type}_{alert_stat}_{rtd_time.strftime('%Y%m%d%H%M')}"
+        announce_no = uuid5(NAMESPACE_DNS, unique_str)
+        insert_query = """
+        INSERT INTO ForecastAnnouncement (
+            announce_no,
+            disaster_region,
+            alert_type,
+            alert_stat,
+            announce_time,
+            comment
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+        IF NOT EXISTS
+        """
+        comment = f"기상특보 자동 수집 / {alert_type} {alert_stat}"
+        try:
+            connector.session.execute(SimpleStatement(insert_query), (
+                announce_no,
+                rtd_loc,
+                alert_type,
+                alert_stat,
+                rtd_time,
+                comment
+            ))
+            saved_count += 1
+
+            # 2) rtd_db 테이블에 저장
+            insert_rtd_data(rtd_code, rtd_time, rtd_loc, rtd_details)
+
+        except Exception as e:
+            logging.error(f"주의보 정보 저장 실패 ({announce_no}): {e}")
+
+    logging.info(f"주의보 정보 저장 완료: 총 {len(data)}건 중 {saved_count}건 저장됨")
+
+# --------------------------------------------------------------------------------
+# 메인 함수
+# --------------------------------------------------------------------------------
 def main():
     logging.info("데이터 수집 시작")
 
@@ -809,11 +1049,14 @@ def main():
     fetch_earthquake_data()
     # 4. 태풍 정보
     get_typhoon_data()
-
     # 5. 홍수 정보
     logging.info("홍수 정보 수집 시작")
     get_flood_data()
     logging.info("홍수 정보 수집 완료")
+    # 6. 기상특보(주의보/경보) 정보
+    logging.info("기상특보(주의보/경보) 정보 수집 시작")
+    get_warning_data()
+    logging.info("기상특보 정보 수집 완료")
 
     # 재난문자 모니터링 시작
     logging.info("재난문자 수집 시작")
