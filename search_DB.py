@@ -9,11 +9,13 @@ from cassandra.query import SimpleStatement
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
 class CassandraConnector:
     """
     Cassandra 데이터베이스에 연결하는 클래스입니다.
     keyspace 및 접속정보(username, password, host, port)를 환경에 맞게 수정하세요.
     """
+
     def __init__(self, keyspace="disaster_service"):
         self.keyspace = keyspace
         self.cluster = None
@@ -30,6 +32,7 @@ class CassandraConnector:
             logging.error(f"Cassandra 접속 오류: {e}")
             sys.exit(1)
 
+
 def get_all_tables(connector):
     """
     system_schema를 통해 현재 keyspace 내의 모든 테이블 이름을 조회합니다.
@@ -42,6 +45,7 @@ def get_all_tables(connector):
     except Exception as e:
         logging.error(f"테이블 목록 조회 오류: {e}")
         return []
+
 
 def interactive_view_table(connector, table_name, page_size=50):
     """
@@ -100,31 +104,71 @@ def interactive_view_table(connector, table_name, page_size=50):
         else:
             print("알 수 없는 명령입니다. 다시 입력하세요.")
 
+
+def display_tables(tables):
+    """
+    테이블 목록을 번호와 함께 출력합니다.
+    """
+    print("\n현재 keyspace에 존재하는 테이블 목록:")
+    for idx, table in enumerate(tables):
+        print(f"{idx + 1}. {table}")
+
+
 def main():
     connector = CassandraConnector()
-    tables = get_all_tables(connector)
+    all_tables = get_all_tables(connector)
 
-    if not tables:
+    if not all_tables:
         print("현재 keyspace에 조회 가능한 테이블이 없습니다.")
         return
 
-    # 메인 메뉴: 테이블 목록 출력
-    print("현재 keyspace('{}')에 존재하는 테이블 목록:".format(connector.keyspace))
-    for table in tables:
-        print(" - " + table)
+    current_tables = all_tables.copy()
+    display_tables(current_tables)
 
-    print("\n조회할 테이블명을 입력하세요. (종료하려면 'q' 입력)")
+    print("\n조회할 테이블을 선택하세요.")
+    print(" - 테이블명 또는 번호를 입력")
+    print(" - 검색하려면 's' 입력")
+    print(" - 테이블 목록 보려면 '?' 입력")
+    print(" - 종료하려면 'q' 입력")
+
     while True:
-        table_name = input("테이블명: ").strip()
-        if table_name.lower() == 'q':
+        user_input = input("선택: ").strip()
+        if user_input.lower() == 'q':
             print("프로그램을 종료합니다.")
             break
-        if table_name not in tables:
-            print(f"'{table_name}' 테이블은 존재하지 않습니다. 다시 입력해주세요.")
+        elif user_input.lower() == '?':
+            display_tables(current_tables)
             continue
-        # 해당 테이블을 인터랙티브하게 페이지 단위로 조회
+        elif user_input.lower() == 's':
+            search_query = input("검색어: ").strip().lower()
+            filtered_tables = [tbl for tbl in all_tables if search_query in tbl.lower()]
+            if not filtered_tables:
+                print("검색 결과가 없습니다.")
+                continue
+            current_tables = filtered_tables
+            display_tables(current_tables)
+            continue
+
+        # 번호 입력인 경우
+        if user_input.isdigit():
+            index = int(user_input) - 1
+            if index < 0 or index >= len(current_tables):
+                print("유효한 번호를 입력하세요.")
+                continue
+            table_name = current_tables[index]
+        else:
+            table_name = user_input
+            if table_name not in all_tables:
+                print(f"'{table_name}' 테이블은 존재하지 않습니다. 다시 입력해주세요.")
+                continue
+
+        # 지정된 테이블을 페이지 단위로 조회
         interactive_view_table(connector, table_name)
-        print("\n다른 테이블을 조회하려면 테이블명을 입력하세요. (종료하려면 'q' 입력)")
+        # 조회 후 전체 테이블 목록으로 복구
+        current_tables = all_tables.copy()
+        display_tables(current_tables)
+        print("\n다른 테이블을 조회하려면 테이블명 또는 번호를, 검색하려면 's', 테이블 목록 보려면 '?', 종료하려면 'q'를 입력하세요.")
+
 
 if __name__ == "__main__":
     main()
