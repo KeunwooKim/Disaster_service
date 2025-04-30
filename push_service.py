@@ -80,6 +80,21 @@ def test(test_id: Optional[str], test_code: Optional[str] = None):
         result.append({"test_id": test_id, "test_code": test_code})
         return JSONResponse(content={"results": result, "count": len(result)})
 
+@app.get("/userReport")
+def createUserMsg(userId: Optional[str] = None, disasterType: Optional[int] = None, disasterTime: Optional[str] = None, disasterPos: Optional[str] = None):
+    if userId is None and disasterType is None:
+        raise HTTPException(
+            status_code=404,
+            detail="값이 비었습니다"
+        )
+    if userId is not None and disasterType is not None:
+        result = []
+        result.append({"userId": userId,
+                       "disasterType": disasterType,
+                       "disasterTime": disasterTime,
+                       "disasterPos": disasterPos,
+                       })
+    return JSONResponse(content={"results": result})
 
 @app.get("/rtd/search")
 def search_rtd(rtd_code: Optional[int] = None, rtd_loc: Optional[str] = None):
