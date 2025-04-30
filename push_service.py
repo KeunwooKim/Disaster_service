@@ -67,6 +67,17 @@ def get_test_events():
         logging.error(f"Cassandra 조회 에러: {e}")
         raise HTTPException(status_code=500, detail="Cassandra 조회 실패")
 
+@app.get("/test")
+def test(test_id: Optional[str], test_code: Optional[str] = None):
+    print(test_id)
+    if test_id is None and test_code is None:
+        raise HTTPException(
+            status_code=404,
+            detail="값이 비었습니다"
+        )
+    if test_id is not None and test_code is not None:
+        print(test_id, test_code)
+
 
 @app.get("/rtd/search")
 def search_rtd(rtd_code: Optional[int] = None, rtd_loc: Optional[str] = None):
