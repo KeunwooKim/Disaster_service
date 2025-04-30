@@ -69,7 +69,6 @@ def get_test_events():
 
 @app.get("/test")
 def test(test_id: Optional[str], test_code: Optional[str] = None):
-    print(test_id)
     if test_id is None and test_code is None:
         raise HTTPException(
             status_code=404,
