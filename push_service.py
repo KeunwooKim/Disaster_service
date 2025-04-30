@@ -81,7 +81,7 @@ def test(test_id: Optional[str], test_code: Optional[str] = None):
         return JSONResponse(content={"results": result, "count": len(result)})
 
 @app.get("/userReport")
-def createUserMsg(userId: Optional[str] = None, disasterType: Optional[int] = None, disasterTime: Optional[str] = None, disasterPos: Optional[str] = None):
+def createUserMsg(userId: Optional[str] = None, disasterType: Optional[int] = None, disasterTime: Optional[str] = None, reportContent: Optional[str] = None, disasterPos: Optional[str] = None):
     if userId is None and disasterType is None:
         raise HTTPException(
             status_code=404,
@@ -92,6 +92,7 @@ def createUserMsg(userId: Optional[str] = None, disasterType: Optional[int] = No
         result.append({"userId": userId,
                        "disasterType": disasterType,
                        "disasterTime": disasterTime,
+                       "reportContent": reportContent,
                        "disasterPos": disasterPos,
                        })
     return JSONResponse(content={"results": result})
