@@ -76,7 +76,9 @@ def test(test_id: Optional[str], test_code: Optional[str] = None):
             detail="값이 비었습니다"
         )
     if test_id is not None and test_code is not None:
-        print(test_id, test_code)
+        result = []
+        result.append({"test_id": test_id, "test_code": test_code})
+        return JSONResponse(content={"results": result, "count": len(result)})
 
 
 @app.get("/rtd/search")
