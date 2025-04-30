@@ -78,6 +78,7 @@ def test(test_id: Optional[str], test_code: Optional[str] = None):
     if test_id is not None and test_code is not None:
         result = []
         result.append({"test_id": test_id, "test_code": test_code})
+        print(result)
         return JSONResponse(content={"results": result, "count": len(result)})
 
 @app.get("/userReport")
@@ -95,6 +96,7 @@ def createUserMsg(userId: Optional[str] = None, disasterType: Optional[int] = No
                        "reportContent": reportContent,
                        "disasterPos": disasterPos,
                        })
+        print(result)
     return JSONResponse(content={"results": result})
 
 @app.get("/rtd/search")
