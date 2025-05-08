@@ -99,31 +99,55 @@ def createUserMsg(userId: Optional[str] = None, disasterType: Optional[int] = No
     return JSONResponse(content={"results": result})
 
 @app.get("/rtd/search")
-def search_rtd(rtd_code: Optional[int] = None, rtd_loc: Optional[str] = None):
+def search_rtd(
+    rtd_code: Optional[int] = None,
+    rtd_loc: Optional[str] = None,
+    region_code: Optional[str] = None,
+    from_time: Optional[str] = None,
+    to_time: Optional[str] = None,
+    days: Optional[int] = 1
+):
     """
-    rtd_db 테이블에서 재난 유형(rtd_code) 또는 재난 장소(rtd_loc)를 기준으로
-    데이터를 검색하여 JSON으로 반환하는 엔드포인트입니다.
+    재난 정보 검색 API
+    - rtd_code: 재난 코드 필터
+    - rtd_loc: 재난 장소 필터
+    - region_code: 지역 코드 필터
+    - from_time, to_time: 시간 필터링
+    - days: 시간 필터링 기본값 1일
+    """
 
-    두 조건 중 하나만 제공되어도 해당 조건에 맞는 데이터를 반환합니다.
-    Cassandra에서는 문자열 검색 시 ALLOW FILTERING을 사용하므로,
-    프로덕션 환경에서는 적절한 인덱싱이나 데이터 모델링이 필요합니다.
-    """
-    if rtd_code is None and rtd_loc is None:
+    if rtd_code is None and rtd_loc is None and region_code is None:
         raise HTTPException(
             status_code=400,
-            detail="검색 조건인 재난 유형(rtd_code) 또는 재난 장소(rtd_loc) 중 하나를 제공해주세요."
+            detail="검색 조건 중 하나를 제공해주세요: rtd_code, rtd_loc, region_code"
         )
+
+    now = datetime.utcnow()
+    try:
+        if from_time and to_time:
+            start_time = datetime.fromisoformat(from_time)
+            end_time = datetime.fromisoformat(to_time)
+        else:
+            end_time = now
+            start_time = now - timedelta(days=days)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="시간 필터링 형식이 잘못되었습니다. ISO 8601 형식으로 입력해주세요. 예: 2025-05-08T00:00:00"
+        )
+
     results = []
     seen_ids = set()
-    # rtd_code 조건 검색
+
+    # rtd_code 및 시간 필터링
     if rtd_code is not None:
         try:
             query = """
-                SELECT rtd_code, rtd_time, id, rtd_loc, rtd_details 
-                FROM rtd_db 
-                WHERE rtd_code = %s ALLOW FILTERING
+                SELECT rtd_code, rtd_time, id, rtd_loc, rtd_details
+                FROM rtd_db
+                WHERE rtd_code = %s AND rtd_time >= %s AND rtd_time <= %s ALLOW FILTERING
             """
-            rows = session.execute(query, (rtd_code,))
+            rows = session.execute(query, (rtd_code, start_time, end_time))
             for row in rows:
                 row_id = str(row.id)
                 if row_id not in seen_ids:
@@ -138,15 +162,16 @@ def search_rtd(rtd_code: Optional[int] = None, rtd_loc: Optional[str] = None):
         except Exception as e:
             logging.error(f"rtd_db 검색 에러 (rtd_code): {e}")
             raise HTTPException(status_code=500, detail="rtd_db 검색 실패 (rtd_code)")
-    # rtd_loc 조건 검색
+
+    # rtd_loc 조건 검색 및 시간 필터링
     if rtd_loc is not None:
         try:
             query = """
-                SELECT rtd_code, rtd_time, id, rtd_loc, rtd_details 
-                FROM rtd_db 
-                WHERE rtd_loc = %s ALLOW FILTERING
+                SELECT rtd_code, rtd_time, id, rtd_loc, rtd_details
+                FROM rtd_db
+                WHERE rtd_loc = %s AND rtd_time >= %s AND rtd_time <= %s ALLOW FILTERING
             """
-            rows = session.execute(query, (rtd_loc,))
+            rows = session.execute(query, (rtd_loc, start_time, end_time))
             for row in rows:
                 row_id = str(row.id)
                 if row_id not in seen_ids:
@@ -161,7 +186,33 @@ def search_rtd(rtd_code: Optional[int] = None, rtd_loc: Optional[str] = None):
         except Exception as e:
             logging.error(f"rtd_db 검색 에러 (rtd_loc): {e}")
             raise HTTPException(status_code=500, detail="rtd_db 검색 실패 (rtd_loc)")
+
+    # region_code 조건 검색 및 시간 필터링
+    if region_code is not None:
+        try:
+            query = """
+                SELECT rtd_code, rtd_time, id, rtd_loc, rtd_details
+                FROM rtd_db
+                WHERE rtd_loc CONTAINS %s AND rtd_time >= %s AND rtd_time <= %s ALLOW FILTERING
+            """
+            rows = session.execute(query, (region_code, start_time, end_time))
+            for row in rows:
+                row_id = str(row.id)
+                if row_id not in seen_ids:
+                    results.append({
+                        "rtd_code": row.rtd_code,
+                        "rtd_time": row.rtd_time.isoformat() if row.rtd_time else None,
+                        "id": row_id,
+                        "rtd_loc": row.rtd_loc,
+                        "rtd_details": row.rtd_details
+                    })
+                    seen_ids.add(row_id)
+        except Exception as e:
+            logging.error(f"rtd_db 검색 에러 (region_code): {e}")
+            raise HTTPException(status_code=500, detail="rtd_db 검색 실패 (region_code)")
+
     return JSONResponse(content={"results": results, "count": len(results)})
+
 
 
 if __name__ == "__main__":
