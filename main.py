@@ -904,26 +904,54 @@ class DisasterMessageCrawler:
         self.driver.get('https://www.safekorea.go.kr/idsiSFK/neo/sfk/cs/sfc/dis/disasterMsgList.jsp?menuSeq=603')
         time.sleep(5)
         messages = []
-        for i in range(10):
+        index = 0
+
+        while True:
             try:
-                msg_id = int(self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MD101_SN").text.strip())
+                # 메시지의 TR 요소를 찾는다.
+                row = self.driver.find_element(By.ID, f"disasterSms_tr_{index}_apiData1")
+
+                # 각 필드 요소를 추출
+                msg_id = row.find_element(By.ID, f"disasterSms_tr_{index}_MD101_SN").text.strip()
+                emergency_level = row.find_element(By.ID, f"disasterSms_tr_{index}_EMRGNCY_STEP_NM").text.strip()
+                ntype = row.find_element(By.ID, f"disasterSms_tr_{index}_DSSTR_SE_NM").text.strip()
+                location = row.find_element(By.ID, f"disasterSms_tr_{index}_MSG_LOC").text.strip()
+                issued_at_str = row.find_element(By.ID, f"disasterSms_tr_{index}_CREATE_DT").text.strip()
+                content = row.find_element(By.ID, f"disasterSms_tr_{index}_MSG_CN").get_attribute("title").strip()
+
+                # 이미 수집된 메시지인지 확인
                 if msg_id in self.seen_ids or self.message_exists(msg_id):
+                    index += 1
                     continue
-                self.seen_ids.add(msg_id)
-                messages.append({
-                    "message_id": msg_id,
-                    "emergency_level": self.driver.find_element(By.ID, f"disasterSms_tr_{i}_EMRGNCY_STEP_NM").text,
-                    "DM_ntype": self.driver.find_element(By.ID, f"disasterSms_tr_{i}_DSSTR_SE_NM").text,
+
+                # 메시지 발행 시간 파싱
+                try:
+                    issued_at = datetime.strptime(issued_at_str, "%Y/%m/%d %H:%M:%S")
+                except Exception as e:
+                    logging.error(f"발행 시간 파싱 오류: {e}")
+                    issued_at = datetime.now()
+
+                # 메시지 객체 생성 및 추가
+                message = {
+                    "message_id": int(msg_id),
+                    "emergency_level": emergency_level,
+                    "DM_ntype": ntype,
                     "DM_stype": "",
-                    "issuing_agency": self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_LOC").text,
-                    "issued_at": datetime.strptime(
-                        self.driver.find_element(By.ID, f"disasterSms_tr_{i}_CREATE_DT").text, "%Y/%m/%d %H:%M:%S"),
-                    "message_content": self.driver.find_element(By.ID, f"disasterSms_tr_{i}_MSG_CN").get_attribute(
-                        "title")
-                })
+                    "issuing_agency": location,
+                    "issued_at": issued_at,
+                    "message_content": content
+                }
+
+                self.seen_ids.add(msg_id)
+                messages.append(message)
+
+                index += 1
+
             except Exception as e:
-                logging.error(f"메시지 추출 오류 (인덱스 {i}): {e}")
-                continue
+                logging.error(f"메시지 추출 오류 (인덱스 {index}): {e}")
+                break
+
+        logging.info(f"수집된 메시지 개수: {len(messages)}")
         return messages
 
     def monitor(self):
