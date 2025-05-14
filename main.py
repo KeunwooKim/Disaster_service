@@ -912,7 +912,7 @@ class DisasterMessageCrawler:
                 row = self.driver.find_element(By.ID, f"disasterSms_tr_{index}_apiData1")
 
                 # 각 필드 요소를 추출
-                msg_id = row.find_element(By.ID, f"disasterSms_tr_{index}_MD101_SN").text.strip()
+                msg_id = int(row.find_element(By.ID, f"disasterSms_tr_{index}_MD101_SN").text.strip())
                 emergency_level = row.find_element(By.ID, f"disasterSms_tr_{index}_EMRGNCY_STEP_NM").text.strip()
                 ntype = row.find_element(By.ID, f"disasterSms_tr_{index}_DSSTR_SE_NM").text.strip()
                 location = row.find_element(By.ID, f"disasterSms_tr_{index}_MSG_LOC").text.strip()
