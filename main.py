@@ -28,7 +28,7 @@ from selenium.webdriver.chrome.service import Service
 # 설정 및 전역변수
 # ---------------------------------------------------------------------------
 load_dotenv()
-API_KEY = os.getenv("API_KEY", "7dWUeNJAqaan8...")
+API_KEY = os.getenv("API_KEY", "7dWUeNJAqaan8oJAs5CbDWKnWaJpLWoxd+lB97UDDRgFfSjfKD7ZGHxM+kRAoZqsga+WlheugBMS2q9WCSaUNg==")
 EQ_API_KEY = os.getenv("EQ_API_KEY", "F5Iz7aHpRUSSM-2h6ZVE2w")
 CHROME_DRIVER_PATH = '/usr/local/bin/chromedriver'
 
