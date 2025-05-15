@@ -109,7 +109,7 @@ class TaskScheduler:
     def __init__(self):
         """
         tasks: { task_name: { "interval": seconds, "last_run": timestamp, "function": callable } }
-        """a
+        """
         self.tasks = {}
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self.run, daemon=True)
