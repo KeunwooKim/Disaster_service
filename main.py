@@ -23,7 +23,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.chrome.service import Service
-from cassandra.query import SimpleStatement
 
 # ---------------------------------------------------------------------------
 # 설정 및 전역변수
@@ -110,7 +109,7 @@ class TaskScheduler:
     def __init__(self):
         """
         tasks: { task_name: { "interval": seconds, "last_run": timestamp, "function": callable } }
-        """
+        """a
         self.tasks = {}
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self.run, daemon=True)
@@ -227,6 +226,8 @@ def insert_rtd_data(rtd_code: int, rtd_time: datetime, rtd_loc: str, rtd_details
 # ---------------------------------------------------------------------------
 # 1. 대기질 예보 수집 (rtd_code 72)
 # ---------------------------------------------------------------------------
+from cassandra.query import SimpleStatement
+
 def get_air_inform():
     logging.info("대기질 예보 데이터 수집 시작")
     now = datetime.now()
@@ -318,10 +319,9 @@ def get_air_inform():
                 ]
                 insert_rtd_data(72, data_time, "", rtd_details)
                 saved_count += 1
-            else:
-                logging.info("대기질 예보 '나쁨' 없음.")
 
     logging.info(f"대기질 예보 RTD 저장 완료: {saved_count}건 저장됨")
+
 
 # ---------------------------------------------------------------------------
 # 2. 실시간 대기질 등급 수집 (rtd_code 71)
