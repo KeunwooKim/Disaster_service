@@ -36,6 +36,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+logging.getLogger('cassandra').setLevel(logging.ERROR)
 
 # 형태소 분석기 인스턴스 생성
 okt = Okt()
