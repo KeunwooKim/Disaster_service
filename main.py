@@ -259,9 +259,9 @@ def get_air_inform():
 
     saved_count = 0
     for item in items:
-        inform_date  = item.get("informData", "").strip()  # '2025-05-15' 등
+        inform_date   = item.get("informData", "").strip()
         if inform_date != today_str:
-            continue  # 오늘 예보가 아니면 건너뛰기
+            continue
 
         try:
             data_time = kst_to_utc(
@@ -271,14 +271,44 @@ def get_air_inform():
         except Exception:
             data_time = datetime.now(timezone.utc)
 
-        inform_code  = item.get("informCode", "")   # e.g., 'PM25'
+        inform_code    = item.get("informCode", "")
         inform_overall = item.get("informOverall", "")
-        inform_grade  = item.get("informGrade", "")  # '서울 : 보통,제주 : 보통,...'
+        inform_grade   = item.get("informGrade", "")
 
-        # PM25 예보이면서 '나쁨' 지역이 하나라도 있으면 RTD에 저장
+        # 1) 원본 데이터를 airinform 테이블에 저장
+        insert_airinform = """
+        INSERT INTO airinform (
+            record_id, cause, code, data_time,
+            forecast_date, grade, overall, search_date
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) IF NOT EXISTS
+        """
+        record_id = uuid5(
+            NAMESPACE_DNS,
+            f"{inform_code}_{inform_date}_{data_time.strftime('%Y%m%d%H')}"
+        )
+        forecast_date = datetime.strptime(inform_date, "%Y-%m-%d").date()
+        cause = item.get("informCause", "")
+        overall = inform_overall
+        grade   = inform_grade
+        search_date_field = today_str
+
+        connector.session.execute(
+            SimpleStatement(insert_airinform),
+            (
+                record_id,
+                cause,
+                inform_code,
+                data_time,
+                forecast_date,
+                grade,
+                overall,
+                search_date_field
+            )
+        )
+
+        # 2) 나쁨 지역만 rtd_db 에 저장
         if inform_code == 'PM25' and '나쁨' in inform_overall:
-            # inform_grade 를 파싱해 나쁨인 지역만 추출
-            regions = [seg.strip() for seg in inform_grade.split(',') if seg.strip()]
+            regions     = [seg.strip() for seg in grade.split(',') if seg.strip()]
             bad_regions = [seg.split(':')[0] for seg in regions if '나쁨' in seg]
             if bad_regions:
                 rtd_details = [
@@ -288,7 +318,7 @@ def get_air_inform():
                 insert_rtd_data(72, data_time, "", rtd_details)
                 saved_count += 1
             else:
-                logging.info(f"대기질 예보 나쁨 지역 없음")
+                logging.info("대기질 예보 '나쁨' 없음.")
 
     logging.info(f"대기질 예보 RTD 저장 완료: {saved_count}건 저장됨")
 
