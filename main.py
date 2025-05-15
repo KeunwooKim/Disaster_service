@@ -316,6 +316,9 @@ def get_air_inform():
                 ]
                 insert_rtd_data(72, data_time, "", rtd_details)
                 saved_count += 1
+            else:
+                # 나쁨 지역이 하나도 없을 때 로그 남기기
+                logging.info(f"PM25 예보({inform_date}) 에는 나쁨 등급 지역이 없습니다.")
 
     logging.info(f"대기질 예보 RTD 저장 완료: {saved_count}건 저장됨")
 
