@@ -228,6 +228,7 @@ def insert_rtd_data(rtd_code: int, rtd_time: datetime, rtd_loc: str, rtd_details
 # ---------------------------------------------------------------------------
 from cassandra.query import SimpleStatement
 
+
 def get_air_inform():
     logging.info("대기질 예보 데이터 수집 시작")
     now = datetime.now()
@@ -252,16 +253,13 @@ def get_air_inform():
         return
 
     data_dict = xmltodict.parse(response.text)
-    items = data_dict.get("response", {}) \
-                     .get("body", {}) \
-                     .get("items", {}) \
-                     .get("item", [])
+    items = data_dict.get("response", {}).get("body", {}).get("items", {}).get("item", [])
     if not isinstance(items, list):
         items = [items]
 
     saved_count = 0
     for item in items:
-        inform_date   = item.get("informData", "").strip()
+        inform_date = item.get("informData", "").strip()
         if inform_date != today_str:
             continue
 
@@ -277,23 +275,21 @@ def get_air_inform():
         inform_overall = item.get("informOverall", "")
         inform_grade   = item.get("informGrade", "")
 
-        # 1) 원본 데이터를 airinform 테이블에 저장
+        # 1) 원본 데이터 airinform 저장
         insert_airinform = """
         INSERT INTO airinform (
             record_id, cause, code, data_time,
             forecast_date, grade, overall, search_date
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) IF NOT EXISTS
         """
-        record_id = uuid5(
+        record_id = str(uuid5(
             NAMESPACE_DNS,
             f"{inform_code}_{inform_date}_{data_time.strftime('%Y%m%d%H')}"
-        )
+        ))
         forecast_date = datetime.strptime(inform_date, "%Y-%m-%d").date()
         cause = item.get("informCause", "")
+        grade = inform_grade
         overall = inform_overall
-        grade   = inform_grade
-        search_date_field = today_str
-
         connector.session.execute(
             SimpleStatement(insert_airinform),
             (
@@ -304,11 +300,11 @@ def get_air_inform():
                 forecast_date,
                 grade,
                 overall,
-                search_date_field
+                today_str
             )
         )
 
-        # 2) 나쁨 지역만 rtd_db 에 저장
+        # 2) 나쁨 지역만 RTD 저장
         if inform_code == 'PM25' and '나쁨' in inform_overall:
             regions     = [seg.strip() for seg in grade.split(',') if seg.strip()]
             bad_regions = [seg.split(':')[0] for seg in regions if '나쁨' in seg]
