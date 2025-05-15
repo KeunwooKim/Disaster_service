@@ -109,7 +109,7 @@ class TaskScheduler:
     def __init__(self):
         """
         tasks: { task_name: { "interval": seconds, "last_run": timestamp, "function": callable } }
-        """
+        """a
         self.tasks = {}
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self.run, daemon=True)
@@ -229,7 +229,8 @@ def insert_rtd_data(rtd_code: int, rtd_time: datetime, rtd_loc: str, rtd_details
 def get_air_inform():
     logging.info("대기질 예보 데이터 수집 시작")
     now = datetime.now()
-    search_date = (now - timedelta(days=1)).strftime("%Y-%m-%d") if now.hour < 9 else now.strftime("%Y-%m-%d")
+    today_str = now.strftime("%Y-%m-%d")
+    search_date = (now - timedelta(days=1)).strftime("%Y-%m-%d") if now.hour < 9 else today_str
     params = {
         "searchDate": search_date,
         "returnType": "xml",
@@ -238,8 +239,10 @@ def get_air_inform():
         "serviceKey": API_KEY
     }
     try:
-        response = session_http.get("http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth",
-                                    params=params, timeout=10)
+        response = session_http.get(
+            "http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth",
+            params=params, timeout=10
+        )
         response.raise_for_status()
         logging.info("대기질 예보 API 연결 확인")
     except Exception as e:
@@ -247,48 +250,47 @@ def get_air_inform():
         return
 
     data_dict = xmltodict.parse(response.text)
-    items = data_dict.get("response", {}).get("body", {}).get("items", {}).get("item", [])
+    items = data_dict.get("response", {}) \
+                     .get("body", {}) \
+                     .get("items", {}) \
+                     .get("item", [])
     if not isinstance(items, list):
         items = [items]
-    saved_count = 0
 
+    saved_count = 0
     for item in items:
-        record_id = f"{item.get('informData')}_{item.get('dataTime')}_{item.get('informCode')}"
+        inform_date  = item.get("informData", "").strip()  # '2025-05-15' 등
+        if inform_date != today_str:
+            continue  # 오늘 예보가 아니면 건너뛰기
+
         try:
-            data_time = kst_to_utc(item["dataTime"].replace("시 발표", "").strip(), "%Y-%m-%d %H")
-            forecast_date = datetime.strptime(item["informData"], "%Y-%m-%d").date()
+            data_time = kst_to_utc(
+                item["dataTime"].replace("시 발표", "").strip(),
+                "%Y-%m-%d %H"
+            )
         except Exception:
             data_time = datetime.now(timezone.utc)
-            forecast_date = None
 
-        query = """
-        INSERT INTO airinform (record_id, cause, code, data_time, forecast_date, grade, overall, search_date)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s) IF NOT EXISTS
-        """
-        if execute_cassandra(query, (
-                record_id,
-                item.get("informCause", ""),
-                item.get("informCode", ""),
-                data_time,
-                forecast_date,
-                item.get("informGrade", ""),
-                item.get("informOverall", ""),
-                datetime.now().date()
-        )):
-            saved_count += 1
-            rtd_details = [
-                f"cause: {item.get('informCause', '')}",
-                f"code: {item.get('informCode', '')}",
-                f"grade: {item.get('informGrade', '')}",
-                f"overall: {item.get('informOverall', '')}",
-                f"search_date: {datetime.now().date()}"
-            ]
-            insert_rtd_data(72, data_time, "", rtd_details)
-        else:
-            logging.error(f"DB 저장 실패 (record_id: {record_id})")
+        inform_code  = item.get("informCode", "")   # e.g., 'PM25'
+        inform_overall = item.get("informOverall", "")
+        inform_grade  = item.get("informGrade", "")  # '서울 : 보통,제주 : 보통,...'
 
-    logging.info(f"대기질 예보 데이터 저장 완료: {len(items)}건 중 {saved_count}건 저장됨")
+        # PM25 예보이면서 '나쁨' 지역이 하나라도 있으면 RTD에 저장
+        if inform_code == 'PM25' and '나쁨' in inform_overall:
+            # inform_grade 를 파싱해 나쁨인 지역만 추출
+            regions = [seg.strip() for seg in inform_grade.split(',') if seg.strip()]
+            bad_regions = [seg.split(':')[0] for seg in regions if '나쁨' in seg]
+            if bad_regions:
+                rtd_details = [
+                    f"code: {inform_code}",
+                    f"grade: {','.join(bad_regions)}"
+                ]
+                insert_rtd_data(72, data_time, "", rtd_details)
+                saved_count += 1
+            else:
+                logging.info(f"대기질 예보 나쁨 지역 없음")
 
+    logging.info(f"대기질 예보 RTD 저장 완료: {saved_count}건 저장됨")
 
 # ---------------------------------------------------------------------------
 # 2. 실시간 대기질 등급 수집 (rtd_code 71)
