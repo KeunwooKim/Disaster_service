@@ -19,7 +19,7 @@ def delete_rtd_code_33():
 
     # 각 레코드에 대해 삭제 쿼리 실행
     for row in rows:
-        rtd_time = row.rtd_time
+        rtd_time = row.rtd_time.strftime('%Y-%m-%d %H:%M:%S')
         record_id = row.id
         delete_query = f"""
         DELETE FROM {TABLE} WHERE rtd_code = 33 AND rtd_time = '{rtd_time}' AND id = {record_id};
