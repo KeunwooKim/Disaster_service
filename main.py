@@ -842,15 +842,22 @@ class DisasterMessageCrawler:
                 logging.error(f"메시지 저장 오류 ({msg['message_id']}): {e}")
 
     def show_status(self):
-        from cassandra.query import SimpleStatement
         print("=== 저장 현황 ===")
         for table in ["airinform", "airgrade", "domestic_earthquake",
                       "domestic_typhoon", "disaster_message", "forecastannouncement",
                       "realtimeflood", "rtd_db"]:
             try:
-                result = connector.session.execute(SimpleStatement(f"SELECT count(*) FROM {table};"))
-                for row in result:
-                    print(f"{table}: {row.count}건")
+                # rtd_db는 count(*) 대신 LIMIT 1 조회
+                if table == "rtd_db":
+                    stmt = SimpleStatement(f"SELECT * FROM {table} LIMIT 1;")
+                    rows = connector.session.execute(stmt)
+                    count = len(list(rows))
+                    print(f"{table}: 데이터 존재함 (샘플 조회 성공)")
+                else:
+                    stmt = SimpleStatement(f"SELECT count(*) FROM {table};")
+                    result = connector.session.execute(stmt)
+                    for row in result:
+                        print(f"{table}: {row.count}건")
             except Exception as e:
                 print(f"{table}: 오류 발생 ({str(e).splitlines()[0]})")
         print("=================")
