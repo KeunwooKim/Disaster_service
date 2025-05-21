@@ -847,9 +847,12 @@ class DisasterMessageCrawler:
         for table in ["airinform", "airgrade", "domestic_earthquake",
                       "domestic_typhoon", "disaster_message", "forecastannouncement",
                       "realtimeflood", "rtd_db"]:
-            result = connector.session.execute(SimpleStatement(f"SELECT count(*) FROM {table};"))
-            for row in result:
-                print(f"{table}: {row.count}건")
+            try:
+                result = connector.session.execute(SimpleStatement(f"SELECT count(*) FROM {table};"))
+                for row in result:
+                    print(f"{table}: {row.count}건")
+            except Exception as e:
+                print(f"{table}: 오류 발생 ({str(e).splitlines()[0]})")
         print("=================")
 
     def process_command(self, cmd):
