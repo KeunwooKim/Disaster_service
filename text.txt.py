@@ -17,20 +17,17 @@ def delete_rtd_code_33():
     """
     rows = session.execute(select_query)
 
-    # 각 레코드에 대해 삭제 쿼리 실행
+    delete_stmt = session.prepare(f"""
+    DELETE FROM {TABLE} WHERE rtd_code = ? AND rtd_time = ? AND id = ?
+    """)
+
     for row in rows:
-        rtd_time = row.rtd_time.strftime('%Y-%m-%d %H:%M:%S')
-        record_id = row.id
-        delete_query = f"""
-        DELETE FROM {TABLE} WHERE rtd_code = 33 AND rtd_time = '{rtd_time}' AND id = {record_id};
-        """
         try:
-            session.execute(delete_query)
-            print(f"Deleted record with rtd_time: {rtd_time} and id: {record_id}")
+            session.execute(delete_stmt, (33, row.rtd_time, row.id))
+            print(f"Deleted record with rtd_time: {row.rtd_time} and id: {row.id}")
         except Exception as e:
             print(f"Error deleting record: {e}")
 
-    print("Deletion process completed.")
 
 if __name__ == "__main__":
     delete_rtd_code_33()
