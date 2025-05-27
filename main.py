@@ -24,6 +24,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.chrome.service import Service
 import pandas as pd
+from functools import partial
+
 # ---------------------------------------------------------------------------
 # 설정 및 전역변수
 # ---------------------------------------------------------------------------
@@ -893,6 +895,14 @@ class DisasterMessageCrawler:
             except Exception as e:
                 logging.error(f"메시지 저장 오류 ({msg['message_id']}): {e}")
 
+    def check_and_save(self):
+        messages = self.check_messages()
+        if messages:
+            self.backup_messages(messages)
+            logging.info(f"스케줄러: 신규 메시지 {len(messages)}건 저장됨")
+        else:
+            logging.info("스케줄러: 신규 재난문자 없음")
+
     def show_status(self):
         print("=== 저장 현황 ===")
         for table in ["airinform", "airgrade", "domestic_earthquake",
@@ -945,6 +955,14 @@ class DisasterMessageCrawler:
             logging.info("주의보 정보 수집 시작")
             get_warning_data()
             logging.info("주의보 정보 수집 완료")
+        elif cmd == "9":
+            logging.info("재난문자 수집 시작")
+            messages = self.check_messages()
+            if messages:
+                self.backup_messages(messages)
+                logging.info(f"신규 메시지 {len(messages)}건 저장됨")
+            else:
+                logging.info("신규 재난문자 없음")
         # 스케줄러 관련 명령어
         elif cmd.startswith("set_interval"):
             # 명령어 형식: set_interval task_name seconds
@@ -983,6 +1001,7 @@ class DisasterMessageCrawler:
         print(" 6 → 태풍 정보 수집")
         print(" 7 → 홍수 정보 수집")
         print(" 8 → 기상특보(주의보/경보) 정보 수집")
+        print(" 9 → 재난문자 수집")
         print(" set_interval <task_name> <초> → 지정 작업 주기 수정")
         print(" list_intervals → 현재 등록된 스케줄 주기 확인")
         print(" ? → 명령어 도움말")
@@ -1079,6 +1098,7 @@ def main():
     scheduler.add_task("typhoon", 3600, get_typhoon_data)  # 태풍: 1시간
     scheduler.add_task("flood", 36000, get_flood_data)  # 홍수: 10시간
     scheduler.add_task("warning", 36000, get_warning_data)  # 기상특보: 10시간
+    scheduler.add_task("disaster_messages", 600, partial(DisasterMessageCrawler().check_and_save))
 
     # 스케줄러 시작 (백그라운드 스레드)
     scheduler.start()
