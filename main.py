@@ -215,33 +215,84 @@ connector = CassandraConnector()
 # ---------------------------------------------------------------------------
 # 지오코딩 및 행정구역 코드 조회
 # ---------------------------------------------------------------------------
+import json
+import os
+import re
+import logging
+from datetime import datetime
 from geopy.geocoders import Nominatim
-import ssl, certifi, warnings
-warnings.filterwarnings("ignore", category=UserWarning)
+import ssl, certifi
+
+# 경고 제거 및 인증 우회 설정
 ssl_context = ssl.create_default_context(cafile=certifi.where())
 ssl_context.check_hostname = False
 ssl_context.verify_mode = ssl.CERT_NONE
 
-geolocator = Nominatim(user_agent='South Korea')
-geocode_cache = {}
+# 캐시 파일 경로
+GEO_CACHE_PATH = "geocode_cache.json"
+FAILED_LOG_PATH = "failed_geocodes.log"
 
+# 지오코딩 객체 초기화
+geolocator = Nominatim(user_agent='South Korea')
+
+# 캐시 로드
+if os.path.exists(GEO_CACHE_PATH):
+    with open(GEO_CACHE_PATH, "r", encoding="utf-8") as f:
+        geocode_cache = json.load(f)
+else:
+    geocode_cache = {}
+
+# 캐시 저장 함수
+def save_geocode_cache():
+    try:
+        with open(GEO_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(geocode_cache, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.warning(f"[캐시 저장 실패] {e}")
+
+# 지오코딩 함수
 def geocoding(address: str) -> dict:
     if not address:
         return {"lat": None, "lng": None}
+
     if address in geocode_cache:
         return geocode_cache[address]
-    try:
-        geo = geolocator.geocode(address, timeout=2)
-        if geo:
-            result = {"lat": str(geo.latitude), "lng": str(geo.longitude)}
-        else:
-            logging.warning(f"Geocoding 실패: '{address}' 결과 없음.")
-            result = {"lat": None, "lng": None}
-    except Exception as e:
-        logging.error(f"Geocoding 오류 ({address}): {e}")
-        result = {"lat": None, "lng": None}
+
+    def try_geocode(query):
+        try:
+            geo = geolocator.geocode(query, timeout=3)
+            if geo:
+                return {"lat": str(geo.latitude), "lng": str(geo.longitude)}
+        except Exception as e:
+            logging.warning(f"[Geocoding 오류] '{query}': {e}")
+        return {"lat": None, "lng": None}
+
+    # 1차 시도
+    result = try_geocode(address)
+
+    # 2차 시도: fallback 주소들
+    if result["lat"] is None:
+        fallback = re.sub(r"[\(\)\d]", "", address).strip()
+        fallback_candidates = [fallback, "충남 " + fallback, fallback + "군", fallback + "구"]
+
+        for alt in fallback_candidates:
+            result = try_geocode(alt)
+            if result["lat"] is not None:
+                logging.info(f"[Fallback] '{address}' → '{alt}' 성공")
+                break
+
+    # 3차: 실패 시 로그 기록
+    if result["lat"] is None:
+        with open(FAILED_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now()} | 주소 실패: {address}\n")
+        logging.warning(f"[Geocoding 실패 기록됨] '{address}'")
+
+    # 캐시에 저장하고 반환
     geocode_cache[address] = result
+    save_geocode_cache()
     return result
+
+
 
 # 행정구역 코드 조회
 def get_regioncode(address: str) -> int:
