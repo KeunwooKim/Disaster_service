@@ -683,19 +683,23 @@ FLOOD_URLS = [
 ]
 
 def get_last_flood_status(region_name: str) -> str:
-    """해당 지역의 가장 최근 예경보 상태 조회"""
+    """해당 지역의 가장 최근 예경보 상태를 Python에서 추출"""
     try:
         query = """
-        SELECT fld_alert FROM RealTimeFlood
-        WHERE fld_region = %s
-        ORDER BY fld_time DESC LIMIT 1 ALLOW FILTERING
+        SELECT fld_time, fld_alert FROM RealTimeFlood
+        WHERE fld_region = %s ALLOW FILTERING
         """
         result = connector.session.execute(query, (region_name,))
-        row = result.one()
-        return row.fld_alert if row else None
+        rows = list(result)
+        if not rows:
+            return None
+        # Python에서 최신 시간으로 정렬 후 가장 최근 값 반환
+        latest_row = max(rows, key=lambda r: r.fld_time)
+        return latest_row.fld_alert
     except Exception as e:
         logging.error(f"[중복 필터] 상태 조회 오류: {e}")
         return None
+
 
 def fetch_flood_data():
     flood_data = []
