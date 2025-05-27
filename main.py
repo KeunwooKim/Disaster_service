@@ -204,37 +204,89 @@ class CassandraConnector:
 
 connector = CassandraConnector()
 
+# ---------------------------------------------------------------------------
+# 지오코딩 및 행정구역 코드 조회
+# ---------------------------------------------------------------------------
+from geopy.geocoders import Nominatim
+import ssl, certifi, warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+ssl_context = ssl.create_default_context(cafile=certifi.where())
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
+
+geolocator = Nominatim(user_agent='South Korea')
+geocode_cache = {}
+
+def geocoding(address: str) -> dict:
+    if not address:
+        return {"lat": None, "lng": None}
+    if address in geocode_cache:
+        return geocode_cache[address]
+    try:
+        geo = geolocator.geocode(address, timeout=3)
+        if geo:
+            result = {"lat": str(geo.latitude), "lng": str(geo.longitude)}
+        else:
+            logging.warning(f"Geocoding 실패: '{address}' 결과 없음.")
+            result = {"lat": None, "lng": None}
+    except Exception as e:
+        logging.error(f"Geocoding 오류 ({address}): {e}")
+        result = {"lat": None, "lng": None}
+    geocode_cache[address] = result
+    return result
+
+# 행정구역 코드 조회
+def get_region_code(address: str) -> int:
+    url = 'http://apis.data.go.kr/1741000/StanReginCd/getStanReginCdList'
+    params = {
+        'serviceKey': API_KEY,
+        'pageNo': '1',
+        'numOfRows': '1',
+        'type': 'xml',
+        'locatadd_nm': address,
+    }
+    try:
+        resp = session_http.get(url, params=params, timeout=5)
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
+        row = root.find('.//row')
+        if row is not None:
+            return int(row.findtext('locathigh_cd') or 0)
+    except Exception as e:
+        logging.warning(f"지역 코드 조회 실패 ({address}): {e}")
+    return None
 
 # ---------------------------------------------------------------------------
 # 통합 데이터 저장 함수
 # ---------------------------------------------------------------------------
-def insert_rtd_data(rtd_code: int, rtd_time: datetime, rtd_loc: str, rtd_details: list):
-    details_str = "_".join(rtd_details)
-    if not rtd_time:
-        rtd_time = datetime.now(timezone.utc)
-    unique_str = f"{rtd_code}_{rtd_time.strftime('%Y%m%d%H%M%S')}_{rtd_loc}_{details_str}"
-    record_id = uuid5(NAMESPACE_DNS, unique_str)
-    query = """
-    INSERT INTO rtd_db (rtd_code, rtd_time, id, rtd_loc, rtd_details)
-    VALUES (%s, %s, %s, %s, %s) IF NOT EXISTS
+def insert_rtd_data(rtd_code, rtd_time, rtd_loc, rtd_details,
+                    region_code=None, latitude=None, longitude=None):
+    record_str = f"{rtd_code}_{rtd_time.strftime('%Y%m%d%H%M%S')}_{rtd_loc}_{'_'.join(rtd_details)}"
+    rec_id = uuid5(NAMESPACE_DNS, record_str)
+    q = """
+    INSERT INTO rtd_db (
+      rtd_code, rtd_time, id, rtd_loc, rtd_details,
+      region_code, latitude, longitude
+    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) IF NOT EXISTS
     """
-    if execute_cassandra(query, (rtd_code, rtd_time, record_id, rtd_loc, rtd_details)):
-        logging.info(f"통합 데이터 저장 성공: {record_id} (코드: {rtd_code})")
+    params = (
+        rtd_code, rtd_time, rec_id, rtd_loc, rtd_details,
+        region_code, latitude, longitude
+    )
+    if execute_cassandra(q, params):
+        logging.info(f"RTD 저장 성공: {rec_id}")
     else:
-        logging.error(f"통합 데이터 저장 실패 (코드: {rtd_code})")
-
+        logging.error(f"RTD 저장 실패: {rec_id}")
 
 # ---------------------------------------------------------------------------
 # 1. 대기질 예보 수집 (rtd_code 72)
 # ---------------------------------------------------------------------------
 from cassandra.query import SimpleStatement
-
-
 def get_air_inform():
     logging.info("대기질 예보 데이터 수집 시작")
     now = datetime.now()
-    today_str = now.strftime("%Y-%m-%d")
-    search_date = (now - timedelta(days=1)).strftime("%Y-%m-%d") if now.hour < 9 else today_str
+    today = now.strftime("%Y-%m-%d")
+    search_date = (now - timedelta(days=1)).strftime("%Y-%m-%d") if now.hour < 9 else today
     params = {
         "searchDate": search_date,
         "returnType": "xml",
@@ -243,91 +295,66 @@ def get_air_inform():
         "serviceKey": API_KEY
     }
     try:
-        response = session_http.get(
+        resp = session_http.get(
             "http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth",
             params=params, timeout=10
         )
-        response.raise_for_status()
-        logging.info("대기질 예보 API 연결 확인")
+        resp.raise_for_status()
     except Exception as e:
-        logging.error(f"Air Inform API 호출 실패: {e}")
+        logging.error(f"Air Inform API 오류: {e}")
         return
 
-    data_dict = xmltodict.parse(response.text)
-    items = data_dict.get("response", {}).get("body", {}).get("items", {}).get("item", [])
+    data = xmltodict.parse(resp.text)
+    items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
     if not isinstance(items, list):
         items = [items]
 
-    saved_count = 0
     for item in items:
         inform_date = item.get("informData", "").strip()
-        if inform_date != today_str:
+        if inform_date != today:
             continue
 
         try:
-            data_time = kst_to_utc(
-                item["dataTime"].replace("시 발표", "").strip(),
-                "%Y-%m-%d %H"
-            )
-        except Exception:
-            data_time = datetime.now(timezone.utc)
+            dt = kst_to_utc(item["dataTime"].replace("시 발표", "").strip(), "%Y-%m-%d %H")
+        except:
+            dt = datetime.now(timezone.utc)
 
-        inform_code    = item.get("informCode", "")
-        inform_overall = item.get("informOverall", "")
-        inform_grade   = item.get("informGrade", "")
+        code = item.get("informCode", "")
+        overall = item.get("informOverall", "")
+        grade = item.get("informGrade", "")
 
-        # 1) 원본 데이터 airinform 저장
-        insert_airinform = """
-        INSERT INTO airinform (
-            record_id, cause, code, data_time,
-            forecast_date, grade, overall, search_date
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) IF NOT EXISTS
-        """
-        record_id = str(uuid5(
-            NAMESPACE_DNS,
-            f"{inform_code}_{inform_date}_{data_time.strftime('%Y%m%d%H')}"
-        ))
-        forecast_date = datetime.strptime(inform_date, "%Y-%m-%d").date()
-        cause = item.get("informCause", "")
-        grade = inform_grade
-        overall = inform_overall
-        connector.session.execute(
-            SimpleStatement(insert_airinform),
-            (
-                record_id,
-                cause,
-                inform_code,
-                data_time,
-                forecast_date,
-                grade,
-                overall,
-                today_str
-            )
-        )
-
-        # 2) 나쁨 지역만 RTD 저장
-        if inform_code == 'PM25' and '나쁨' in inform_overall:
-            regions     = [seg.strip() for seg in grade.split(',') if seg.strip()]
-            bad_regions = [seg.split(':')[0] for seg in regions if '나쁨' in seg]
+        # PM25 예보 중 '나쁨' 지역에 대해 RTD 저장
+        if code == 'PM25' and '나쁨' in overall:
+            bad_regions = [seg.split(':')[0] for seg in grade.split(',') if '나쁨' in seg]
             if bad_regions:
                 rtd_details = [
-                    f"code: {inform_code}",
+                    f"code: {code}",
                     f"grade: {','.join(bad_regions)}"
                 ]
-                insert_rtd_data(72, data_time, "", rtd_details)
-                saved_count += 1
+                for region in bad_regions:
+                    coords = geocoding(region)
+                    region_cd = get_region_code(region)
+                    # ↓ 여기만 바뀜: print → insert_rtd_data
+                    insert_rtd_data(
+                        72,
+                        dt,
+                        region,
+                        rtd_details,
+                        region_cd,
+                        float(coords['lat']) if coords['lat'] else None,
+                        float(coords['lng']) if coords['lng'] else None
+                    )
             else:
-                # 나쁨 지역이 하나도 없을 때 로그 남기기
-                logging.info(f"PM25 예보({inform_date}) 에는 나쁨 등급 지역이 없습니다.")
+                logging.info("나쁨 등급 지역 없음")
 
-    logging.info(f"대기질 예보 RTD 저장 완료: {saved_count}건 저장됨")
+    logging.info("대기질 예보 수집 완료")
 
 
 # ---------------------------------------------------------------------------
 # 2. 실시간 대기질 등급 수집 (rtd_code 71)
 # ---------------------------------------------------------------------------
 def get_air_grade():
-    logging.info("실시간 대기질 등급 데이터 수집 시작")
+    logging.info("실시간 대기질 등급 수집 시작")
     params = {
         "sidoName": "전국",
         "returnType": "xml",
@@ -337,74 +364,63 @@ def get_air_grade():
         "ver": "1.3"
     }
     try:
-        response = session_http.get(
+        resp = session_http.get(
             "http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty",
             params=params, timeout=10
         )
-        response.raise_for_status()
-        logging.info("실시간 미세먼지 API 연결 확인")
+        resp.raise_for_status()
     except Exception as e:
-        logging.error(f"Air Grade API 실패: {e}")
+        logging.error(f"Air Grade API 오류: {e}")
         return
 
-    data_dict = xmltodict.parse(response.text)
-    items = data_dict.get("response", {}).get("body", {}).get("items", {}).get("item", [])
+    data = xmltodict.parse(resp.text)
+    items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
     if isinstance(items, dict):
         items = [items]
 
-    saved_count = 0
-    korea_tz = timezone(timedelta(hours=9))
-
-    for item in items:
-        if item.get("pm10Grade1h") is None and item.get("pm25Grade1h") is None:
-            continue
-
+    for it in items:
+        # 시간 파싱
         try:
-            dt = datetime.strptime(item["dataTime"], "%Y-%m-%d %H:%M").replace(tzinfo=korea_tz)
-            dt = dt.astimezone(timezone.utc)
-        except Exception:
-            dt = datetime.utcnow()
+            dt = kst_to_utc(it["dataTime"], "%Y-%m-%d %H:%M")
+        except:
+            dt = datetime.now(timezone.utc)
 
-        station = item.get("stationName")
-        from cassandra.query import SimpleStatement
-        check_query = "SELECT pm_no FROM airgrade WHERE stationname=%s ALLOW FILTERING"
-        result = connector.session.execute(SimpleStatement(check_query), (station,))
-        row = result.one()
+        pm10 = int(it.get("pm10Grade1h") or 0)
+        pm25 = int(it.get("pm25Grade1h") or 0)
+        station = it.get("stationName", "").strip()
+        sido = it.get("sidoName", "").strip()
 
-        pm10_grade = int(item.get("pm10Grade1h") or 0)
-        pm25_grade = int(item.get("pm25Grade1h") or 0)
-
-        if row:
-            update = """
-            UPDATE airgrade
-            SET data_time=%s, pm10_grade=%s, pm25_grade=%s, sido=%s
-            WHERE pm_no=%s
-            """
-            if execute_cassandra(update, (dt, pm10_grade, pm25_grade, item.get("sidoName", ""), row.pm_no)):
-                saved_count += 1
-            else:
-                logging.error(f"업데이트 실패 ({station})")
-        else:
-            insert = """
-            INSERT INTO airgrade (pm_no, data_time, pm10_grade, pm25_grade, sido, stationname)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            """
-            if execute_cassandra(insert, (uuid4(), dt, pm10_grade, pm25_grade, item.get("sidoName", ""), station)):
-                saved_count += 1
-            else:
-                logging.error(f"삽입 실패 ({station})")
-
-        if pm10_grade >= 3 or pm25_grade >= 3:
+        # 위험 등급 이상인 경우만 RTD 저장
+        if pm10 >= 3 or pm25 >= 3:
             rtd_details = [
-                f"pm10_grade: {pm10_grade}",
-                f"pm25_grade: {pm25_grade}",
-                f"sido: {item.get('sidoName', '')}",
+                f"pm10_grade: {pm10}",
+                f"pm25_grade: {pm25}",
+                f"sido: {sido}",
                 f"station: {station}"
             ]
-            insert_rtd_data(71, dt, station, rtd_details)
 
-    logging.info(f"실시간 대기질 등급 데이터 저장 완료: {len(items)}건 중 {saved_count}건 처리됨")
+            # 1) station 단위 좌표 조회
+            coords = geocoding(station)
+            # 2) 실패 시 sido 단위 재조회
+            if coords["lat"] is None:
+                logging.info(f"'{station}' 좌표 없음 → '{sido}'로 재조회")
+                coords = geocoding(sido)
 
+            # 행정구역 코드 조회
+            region_cd = get_region_code(station)
+
+            # RTD 저장
+            insert_rtd_data(
+                71,
+                dt,
+                station,
+                rtd_details,
+                region_cd,
+                float(coords["lat"]) if coords["lat"] else None,
+                float(coords["lng"]) if coords["lng"] else None
+            )
+
+    logging.info("실시간 대기질 등급 수집 완료")
 
 # ---------------------------------------------------------------------------
 # 3. 지진 정보 수집 (rtd_code 51)
