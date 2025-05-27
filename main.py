@@ -1034,13 +1034,14 @@ class DisasterMessageCrawler:
     def backup_messages(self, messages):
         from cassandra.query import SimpleStatement
         for msg in messages:
+            logging.info(f"✅ INSERT 시도 중: {msg['message_id']}")
             try:
                 self.session.execute(SimpleStatement("""
                     INSERT INTO disaster_message (
                         message_id, emergency_level, DM_ntype, DM_stype, issuing_agency, issued_at, message_content
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s) IF NOT EXISTS
                 """), (
-                    msg['message_id'],
+                    int(msg['message_id']),
                     msg['emergency_level'],
                     msg['DM_ntype'],
                     msg['DM_stype'],
@@ -1048,16 +1049,9 @@ class DisasterMessageCrawler:
                     msg['issued_at'],
                     msg['message_content']
                 ))
-                logging.info(f"메시지 저장됨: {msg['message_id']}")
-                rtd_details = [
-                    f"emergency_level: {msg['emergency_level']}",
-                    f"DM_ntype: {msg['DM_ntype']}",
-                    f"issuing_agency: {msg['issuing_agency']}",
-                    f"content: {msg['message_content']}"
-                ]
-                insert_rtd_data(21, msg['issued_at'], msg['issuing_agency'], rtd_details)
+                logging.info(f"✅ 저장 성공: {msg['message_id']}")
             except Exception as e:
-                logging.error(f"메시지 저장 오류 ({msg['message_id']}): {e}")
+                logging.error(f"❌ 저장 실패: {msg['message_id']} → {e}")
 
     def check_and_save(self):
         messages = self.check_messages()
