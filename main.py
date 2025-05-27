@@ -863,17 +863,10 @@ class DisasterMessageCrawler:
                       "domestic_typhoon", "disaster_message", "forecastannouncement",
                       "realtimeflood", "rtd_db"]:
             try:
-                # rtd_db는 count(*) 대신 LIMIT 1 조회
-                if table == "rtd":
-                    stmt = SimpleStatement(f"SELECT * FROM {table} LIMIT 1;")
-                    rows = connector.session.execute(stmt)
-                    count = len(list(rows))
-                    print(f"{table}: 데이터 존재함 (샘플 조회 성공)")
-                else:
-                    stmt = SimpleStatement(f"SELECT count(*) FROM {table};")
-                    result = connector.session.execute(stmt)
-                    for row in result:
-                        print(f"{table}: {row.count}건")
+                stmt = SimpleStatement(f"SELECT count(*) FROM {table};")
+                result = connector.session.execute(stmt)
+                for row in result:
+                    print(f"{table}: {row.count}건")
             except Exception as e:
                 print(f"{table}: 오류 발생 ({str(e).splitlines()[0]})")
         print("=================")
@@ -1048,8 +1041,8 @@ def main():
     scheduler.add_task("air_grade", 36000, get_air_grade)  # 실시간 미세먼지: 10시간
     scheduler.add_task("earthquake", 600, fetch_earthquake_data)  # 지진: 10분
     scheduler.add_task("typhoon", 3600, get_typhoon_data)  # 태풍: 1시간
-    scheduler.add_task("flood", 600, get_flood_data)  # 홍수: 10분
-    scheduler.add_task("warning", 300, get_warning_data)  # 기상특보: 5분
+    scheduler.add_task("flood", 36000, get_flood_data)  # 홍수: 10시간
+    scheduler.add_task("warning", 36000, get_warning_data)  # 기상특보: 10시간
 
     # 스케줄러 시작 (백그라운드 스레드)
     scheduler.start()
