@@ -223,7 +223,7 @@ def geocoding(address: str) -> dict:
     if address in geocode_cache:
         return geocode_cache[address]
     try:
-        geo = geolocator.geocode(address, timeout=1)
+        geo = geolocator.geocode(address, timeout=2)
         if geo:
             result = {"lat": str(geo.latitude), "lng": str(geo.longitude)}
         else:
