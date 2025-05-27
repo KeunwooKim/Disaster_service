@@ -102,6 +102,10 @@ WARNING_CODES = {  # 재난 코드 매핑
 FLOOD_CODE = 33
 TYPHOON_CODE = 31
 
+# ——— 다리 좌표 CSV 로드 ———
+# korea_bridge_info.csv 에는 columns: ['bridge', 'bridge_lat', 'bridge_lon']
+bridge_df = pd.read_csv("data/korea_bridge_info.csv", encoding="utf-8")
+bridge_coords = bridge_df.set_index("bridge")[["bridge_lat", "bridge_lon"]].to_dict("index")
 
 # ---------------------------------------------------------------------------
 # [새로운 부분] 스케줄러 클래스
@@ -616,58 +620,64 @@ def get_typhoon_data():
 # ---------------------------------------------------------------------------
 # 5. 홍수 정보 수집 (rtd_code 33)
 # ---------------------------------------------------------------------------
-FLOOD_URL = "https://www.water.or.kr/kor/flood/floodwarning/index.do?mode=list&types=1&menuId=16_166_170_172"
-
 
 def fetch_flood_data():
-    try:
-        response = session_http.get(FLOOD_URL)
-    except Exception as e:
-        logging.error(f"홍수 데이터 요청 실패: {e}")
-        return []
-
-    if response.status_code != 200:
-        logging.error(f"홍수 데이터 페이지 응답 오류: {response.status_code}")
-        return []
-
-    soup = BeautifulSoup(response.text, 'html.parser')
-    table = soup.find('table', class_='basic_table')
-    if not table or not table.find('tbody'):
-        logging.info("홍수 테이블 또는 tbody를 찾을 수 없습니다.")
-        return []
-
-    rows = table.find('tbody').find_all('tr')
     flood_data = []
-    for row in rows:
-        cells = row.find_all('td')
-        if cells and len(cells) >= 7:
-            region = cells[0].text.strip()
-            current_level = cells[1].text.strip()
-            advisory_level = cells[2].text.strip()
-            warning_level = cells[3].text.strip()
-            flow_rate = cells[4].text.strip()
-            alert_status = cells[5].text.strip()
-            issued_time = cells[6].text.strip()
+    for url, code in FLOOD_URLS:
+        try:
+            resp = session_http.get(url)
+            resp.raise_for_status()
+        except Exception as e:
+            logging.error(f"홍수 데이터 요청 실패 ({url}): {e}")
+            continue
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        tbody = soup.select_one("table.basic_table tbody")
+        if not tbody:
+            logging.info(f"{url}에서 테이블을 찾을 수 없습니다.")
+            continue
+
+        for row in tbody.find_all("tr"):
+            cells = row.find_all("td")
+            if len(cells) < 7:
+                continue
+
+            region_txt     = cells[0].get_text(strip=True)
+            current_level  = cells[1].get_text(strip=True)
+            advisory_level = cells[2].get_text(strip=True)
+            warning_level  = cells[3].get_text(strip=True)
+            flow_rate      = cells[4].get_text(strip=True)
+            alert_status   = cells[5].get_text(strip=True)
+            issue_time_txt = cells[6].get_text(strip=True)
 
             try:
-                issued_dt = kst_to_utc(issued_time, "%Y-%m-%d %H:%M")
-            except Exception:
+                issued_dt = kst_to_utc(issue_time_txt, "%Y-%m-%d %H:%M")
+            except:
                 issued_dt = datetime.now(timezone.utc)
 
+            # “지역명(다리명)” 형태에서 다리명만 추출
+            m = re.search(r"\(([^)]+)\)", region_txt)
+            bridge_name = m.group(1) if m else None
+            coords = bridge_coords.get(bridge_name, {})
+            lat = coords.get("bridge_lat")
+            lon = coords.get("bridge_lon")
+
             flood_data.append({
-                "rtd_code": FLOOD_CODE,
-                "rtd_time": issued_dt,
-                "rtd_loc": region,
-                "rtd_details": [
+                "code":    code,
+                "time":    issued_dt,
+                "loc":     region_txt,
+                "status":  alert_status,
+                "details":[
                     f"현재 수위: {current_level}m",
                     f"주의보 수위: {advisory_level}m",
                     f"경보 수위: {warning_level}m",
                     f"유량: {flow_rate}㎥/s",
                     f"예경보 현황: {alert_status}"
-                ]
+                ],
+                "lat":     lat,
+                "lon":     lon
             })
     return flood_data
-
 
 def get_flood_data():
     logging.info("홍수 정보 수집 함수 get_flood_data() 실행")
@@ -678,22 +688,40 @@ def get_flood_data():
 
     saved_count = 0
     for item in data:
-        comment_str = "; ".join(item["rtd_details"])
-        unique_str = f"{item['rtd_time'].strftime('%Y%m%d%H%M')}_{item['rtd_loc']}_{comment_str}"
-        fld_no = uuid5(NAMESPACE_DNS, unique_str)
-        insert_flood = """
-        INSERT INTO RealTimeFlood (fld_no, fld_region, fld_alert, fld_time, comment)
-        VALUES (%s, %s, %s, %s, %s)
-        IF NOT EXISTS
-        """
-        alert_status_str = item["rtd_details"][-1].replace("예경보 현황: ", "")
-        if execute_cassandra(insert_flood, (fld_no, item["rtd_loc"], alert_status_str, item["rtd_time"], comment_str)):
-            saved_count += 1
-            insert_rtd_data(item["rtd_code"], item["rtd_time"], item["rtd_loc"], item["rtd_details"])
-        else:
-            logging.error("홍수 정보 저장 실패")
-    logging.info(f"홍수 정보 저장 완료: {len(data)}건 중 {saved_count}건 저장됨")
+        comment_str = "; ".join(item["details"])
+        unique_str  = f"{item['time'].strftime('%Y%m%d%H%M')}_{item['loc']}_{comment_str}"
+        fld_no      = uuid5(NAMESPACE_DNS, unique_str)
 
+        # 1) RealTimeFlood 테이블에 저장
+        insert_flood_cql = """
+        INSERT INTO RealTimeFlood
+          (fld_no, fld_region, fld_alert, fld_time, comment)
+        VALUES (%s, %s, %s, %s, %s) IF NOT EXISTS
+        """
+        alert_stat = item["status"].replace("예경보 현황: ", "")
+        if execute_cassandra(insert_flood_cql, (
+                fld_no,
+                item["loc"],
+                alert_stat,
+                item["time"],
+                comment_str
+        )):
+            saved_count += 1
+
+            # 2) 상태가 바뀐 경우에만 rtd_db에 저장
+            insert_rtd_data(
+                item["code"],
+                item["time"],
+                item["loc"],
+                item["details"],
+                None,                 # regioncode (필요시 get_regioncode() 호출)
+                item["lat"],
+                item["lon"]
+            )
+        else:
+            logging.error("RealTimeFlood 저장 실패")
+
+    logging.info(f"홍수 정보 저장 완료: {len(data)}건 중 {saved_count}건 저장됨")
 
 # ---------------------------------------------------------------------------
 # 6. 기상특보(주의보/경보) 수집 (rtd_code는 WARNING_CODES 사용)
