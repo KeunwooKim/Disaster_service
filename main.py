@@ -105,7 +105,9 @@ TYPHOON_CODE = 31
 # ——— 다리 좌표 CSV 로드 ———
 # korea_bridge_info.csv 에는 columns: ['bridge', 'bridge_lat', 'bridge_lon']
 bridge_df = pd.read_csv("data/korea_bridge_info.csv", encoding="utf-8")
+bridge_df = bridge_df.drop_duplicates(subset="bridge")  # 중복 제거
 bridge_coords = bridge_df.set_index("bridge")[["bridge_lat", "bridge_lon"]].to_dict("index")
+
 
 # ---------------------------------------------------------------------------
 # [새로운 부분] 스케줄러 클래스
