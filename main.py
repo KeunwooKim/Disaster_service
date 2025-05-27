@@ -623,6 +623,12 @@ def get_typhoon_data():
 # 5. 홍수 정보 수집 (rtd_code 33)
 # ---------------------------------------------------------------------------
 
+FLOOD_URLS = [
+    ("https://www.water.or.kr/kor/flood/floodwarning/index.do?mode=list&types=1&menuId=16_166_170_172", 172),
+    ("https://www.water.or.kr/kor/flood/floodwarning/index.do?mode=list&types=2&menuId=16_166_170_173", 173),
+    ("https://www.water.or.kr/kor/flood/floodwarning/index.do?mode=list&types=3&menuId=16_166_170_174", 174),
+    ("https://www.water.or.kr/kor/flood/floodwarning/index.do?mode=list&types=4&menuId=16_166_170_175", 175),
+]
 def fetch_flood_data():
     flood_data = []
     for url, code in FLOOD_URLS:
