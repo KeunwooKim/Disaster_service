@@ -675,13 +675,28 @@ def get_typhoon_data():
 # ---------------------------------------------------------------------------
 # 5. 홍수 정보 수집 (rtd_code 33)
 # ---------------------------------------------------------------------------
-
 FLOOD_URLS = [
     ("https://www.water.or.kr/kor/flood/floodwarning/index.do?mode=list&types=1&menuId=16_166_170_172", 172),
     ("https://www.water.or.kr/kor/flood/floodwarning/index.do?mode=list&types=2&menuId=16_166_170_173", 173),
     ("https://www.water.or.kr/kor/flood/floodwarning/index.do?mode=list&types=3&menuId=16_166_170_174", 174),
     ("https://www.water.or.kr/kor/flood/floodwarning/index.do?mode=list&types=4&menuId=16_166_170_175", 175),
 ]
+
+def get_last_flood_status(region_name: str) -> str:
+    """해당 지역의 가장 최근 예경보 상태 조회"""
+    try:
+        query = """
+        SELECT fld_alert FROM RealTimeFlood
+        WHERE fld_region = %s
+        ORDER BY fld_time DESC LIMIT 1 ALLOW FILTERING
+        """
+        result = connector.session.execute(query, (region_name,))
+        row = result.one()
+        return row.fld_alert if row else None
+    except Exception as e:
+        logging.error(f"[중복 필터] 상태 조회 오류: {e}")
+        return None
+
 def fetch_flood_data():
     flood_data = []
     for url, code in FLOOD_URLS:
@@ -716,7 +731,7 @@ def fetch_flood_data():
             except:
                 issued_dt = datetime.now(timezone.utc)
 
-            # “지역명(다리명)” 형태에서 다리명만 추출
+            # 다리명 추출
             m = re.search(r"\(([^)]+)\)", region_txt)
             bridge_name = m.group(1) if m else None
             coords = bridge_coords.get(bridge_name, {})
@@ -728,7 +743,7 @@ def fetch_flood_data():
                 "time":    issued_dt,
                 "loc":     region_txt,
                 "status":  alert_status,
-                "details":[
+                "details": [
                     f"현재 수위: {current_level}m",
                     f"주의보 수위: {advisory_level}m",
                     f"경보 수위: {warning_level}m",
@@ -750,34 +765,39 @@ def get_flood_data():
     saved_count = 0
     for item in data:
         comment_str = "; ".join(item["details"])
-        unique_str  = f"{item['time'].strftime('%Y%m%d%H%M')}_{item['loc']}_{comment_str}"
-        fld_no      = uuid5(NAMESPACE_DNS, unique_str)
-
-        # 1) RealTimeFlood 테이블에 저장
-        insert_flood_cql = """
-        INSERT INTO RealTimeFlood
-          (fld_no, fld_region, fld_alert, fld_time, comment)
-        VALUES (%s, %s, %s, %s, %s) IF NOT EXISTS
-        """
         alert_stat = item["status"].replace("예경보 현황: ", "")
+        last_status = get_last_flood_status(item["loc"])
+
+        # 상태가 같으면 저장하지 않음
+        if alert_stat == last_status:
+            logging.info(f"[중복 상태] {item['loc']} - '{alert_stat}' 유지 → 저장 생략")
+            continue
+
+        fld_no = uuid5(NAMESPACE_DNS, f"{item['time'].strftime('%Y%m%d%H%M')}_{item['loc']}_{comment_str}")
+
+        insert_flood_cql = """
+        INSERT INTO RealTimeFlood (
+            fld_no, fld_region, fld_alert, fld_time, comment
+        ) VALUES (%s, %s, %s, %s, %s) IF NOT EXISTS
+        """
         if execute_cassandra(insert_flood_cql, (
-                fld_no,
-                item["loc"],
-                alert_stat,
-                item["time"],
-                comment_str
+            fld_no,
+            item["loc"],
+            alert_stat,
+            item["time"],
+            comment_str
         )):
             saved_count += 1
 
-            # 2) 상태가 바뀐 경우에만 rtd_db에 저장
+            # RTD 저장도 함께
             insert_rtd_data(
                 item["code"],
                 item["time"],
                 item["loc"],
                 item["details"],
-                None,                 # regioncode (필요시 get_regioncode() 호출)
-                item["lat"],
-                item["lon"]
+                None,
+                item.get("lat"),
+                item.get("lon")
             )
         else:
             logging.error("RealTimeFlood 저장 실패")
