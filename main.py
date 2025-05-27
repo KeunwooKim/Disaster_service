@@ -1031,10 +1031,71 @@ class DisasterMessageCrawler:
                                       (msg_id,))
         return result.one() is not None
 
+    def check_messages(self):
+        self.driver.get(
+            'https://www.safekorea.go.kr/idsiSFK/neo/sfk/cs/sfc/dis/disasterMsgList.jsp?menuSeq=603'
+        )
+        time.sleep(5)
+
+        messages = []
+        rows = self.driver.find_elements(By.CSS_SELECTOR, "table.basic_table tbody tr")
+        logging.info(f"✅ 테이블에서 수집된 행 수: {len(rows)}")
+
+        for row in rows:
+            row_id = row.get_attribute('id')
+            try:
+                idx = re.search(r'disasterSms_tr_(\d+)_apiData1', row_id).group(1)
+            except:
+                logging.warning(f"⚠️ row_id 파싱 실패: {row_id}")
+                continue
+
+            try:
+                msg_id = int(row.find_element(By.ID, f"disasterSms_tr_{idx}_MD101_SN").text.strip())
+                emergency_level = row.find_element(By.ID, f"disasterSms_tr_{idx}_EMRGNCY_STEP_NM").text.strip()
+                ntype = row.find_element(By.ID, f"disasterSms_tr_{idx}_DSSTR_SE_NM").text.strip()
+                location = row.find_element(By.ID, f"disasterSms_tr_{idx}_MSG_LOC").text.strip()
+                issued_at_str = row.find_element(By.ID, f"disasterSms_tr_{idx}_CREATE_DT").text.strip()
+                content = row.find_element(By.ID, f"disasterSms_tr_{idx}_MSG_CN").get_attribute("title").strip()
+            except Exception as e:
+                logging.error(f"❌ 필드 추출 오류 (row {row_id}): {e}")
+                continue
+
+            if msg_id in self.seen_ids:
+                logging.info(f"⏩ 이미 seen_ids에 있음: {msg_id}")
+                continue
+            if self.message_exists(msg_id):
+                logging.info(f"⏩ 이미 DB에 있음: {msg_id}")
+                continue
+
+            try:
+                issued_at = datetime.strptime(issued_at_str, "%Y/%m/%d %H:%M:%S")
+            except Exception as e:
+                logging.warning(f"⚠️ 날짜 파싱 실패: {issued_at_str} → {e}")
+                issued_at = datetime.now()
+
+            message = {
+                "message_id": msg_id,
+                "emergency_level": emergency_level,
+                "DM_ntype": ntype,
+                "DM_stype": "",
+                "issuing_agency": location,
+                "issued_at": issued_at,
+                "message_content": content
+            }
+
+            logging.info(f"📦 수집된 메시지:\n{json.dumps(message, ensure_ascii=False, indent=2, default=str)}")
+
+            self.seen_ids.add(msg_id)
+            messages.append(message)
+
+        logging.info(f"✅ 최종 저장 대상 메시지 수: {len(messages)}")
+        return messages
+
     def backup_messages(self, messages):
         from cassandra.query import SimpleStatement
         for msg in messages:
             try:
+                logging.info(f"💾 저장 시도 중: {msg['message_id']}")
                 self.session.execute(SimpleStatement("""
                     INSERT INTO disaster_message (
                         message_id, emergency_level, DM_ntype, DM_stype, issuing_agency, issued_at, message_content
@@ -1048,7 +1109,7 @@ class DisasterMessageCrawler:
                     msg['issued_at'],
                     msg['message_content']
                 ))
-                logging.info(f"메시지 저장됨: {msg['message_id']}")
+                logging.info(f"✅ 메시지 저장 성공: {msg['message_id']}")
                 rtd_details = [
                     f"emergency_level: {msg['emergency_level']}",
                     f"DM_ntype: {msg['DM_ntype']}",
@@ -1057,7 +1118,7 @@ class DisasterMessageCrawler:
                 ]
                 insert_rtd_data(21, msg['issued_at'], msg['issuing_agency'], rtd_details)
             except Exception as e:
-                logging.error(f"메시지 저장 오류 ({msg['message_id']}): {e}")
+                logging.error(f"❌ 메시지 저장 실패 ({msg['message_id']}): {e}")
 
     def check_and_save(self):
         messages = self.check_messages()
