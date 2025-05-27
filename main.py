@@ -864,7 +864,7 @@ class DisasterMessageCrawler:
                       "realtimeflood", "rtd_db"]:
             try:
                 # rtd_db는 count(*) 대신 LIMIT 1 조회
-                if table == "rtd_db":
+                if table == "rtd":
                     stmt = SimpleStatement(f"SELECT * FROM {table} LIMIT 1;")
                     rows = connector.session.execute(stmt)
                     count = len(list(rows))
