@@ -251,13 +251,54 @@ def save_geocode_cache():
         logging.warning(f"[캐시 저장 실패] {e}")
 
 # 지오코딩 함수
+import json
+import os
+import re
+import logging
+from datetime import datetime
+from geopy.geocoders import Nominatim
+import ssl, certifi
+
+# 파일 경로 설정
+GEO_CACHE_PATH = "geocode_cache.json"
+FAILED_LOG_PATH = "failed_geocodes.log"
+
+# Geopy 설정
+geolocator = Nominatim(user_agent='South Korea')
+ssl_context = ssl.create_default_context(cafile=certifi.where())
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
+
+# 캐시 로드
+if os.path.exists(GEO_CACHE_PATH):
+    with open(GEO_CACHE_PATH, "r", encoding="utf-8") as f:
+        geocode_cache = json.load(f)
+else:
+    geocode_cache = {}
+
+# 캐시 저장 함수
+def save_geocode_cache():
+    try:
+        with open(GEO_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(geocode_cache, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.warning(f"[캐시 저장 실패] {e}")
+
+# Geocoding 함수
 def geocoding(address: str) -> dict:
     if not address:
-        return {"lat": None, "lng": None}
+        return {"lat": None, "lng": None, "source": "invalid"}
 
+    # 괄호 제거한 주소
+    cleaned_address = re.sub(r"\(.*?\)", "", address).strip()
+
+    # 캐시 확인
     if address in geocode_cache:
-        return geocode_cache[address]
+        return {**geocode_cache[address], "source": "cache"}
+    if cleaned_address in geocode_cache:
+        return {**geocode_cache[cleaned_address], "source": "cache"}
 
+    # 내부 시도 함수
     def try_geocode(query):
         try:
             geo = geolocator.geocode(query, timeout=3)
@@ -267,42 +308,83 @@ def geocoding(address: str) -> dict:
             logging.warning(f"[Geocoding 오류] '{query}': {e}")
         return {"lat": None, "lng": None}
 
-    # 1차 시도
+    # 1차 시도: 원본
     result = try_geocode(address)
 
-    # 2차 시도: fallback 주소들
-    if result["lat"] is None:
-        fallback = re.sub(r"[\(\)\d]", "", address).strip()
-        fallback_candidates = [fallback, "충남 " + fallback, fallback + "군", fallback + "구"]
+    # 2차: 괄호 제거 주소
+    if result["lat"] is None and cleaned_address != address:
+        result = try_geocode(cleaned_address)
+        if result["lat"] is not None:
+            logging.info(f"[Geocoding API] '{cleaned_address}' → lat: {result['lat']}, lon: {result['lng']}")
 
-        for alt in fallback_candidates:
-            result = try_geocode(alt)
+    # 3차: fallback 시도
+    if result["lat"] is None:
+        fallback_candidates = [
+            cleaned_address,
+            "충남 " + cleaned_address,
+            cleaned_address + "군",
+            cleaned_address + "구"
+        ]
+        for fallback in fallback_candidates:
+            result = try_geocode(fallback)
             if result["lat"] is not None:
-                logging.info(f"[Fallback] '{address}' → '{alt}' 성공")
+                logging.info(f"[Geocoding API] '{fallback}' → lat: {result['lat']}, lon: {result['lng']}")
                 break
 
-    # 3차: 실패 시 로그 기록
+    # 실패 시 로그 기록
     if result["lat"] is None:
         with open(FAILED_LOG_PATH, "a", encoding="utf-8") as f:
             f.write(f"{datetime.now()} | 주소 실패: {address}\n")
-        logging.warning(f"[Geocoding 실패 기록됨] '{address}'")
 
-    # 캐시에 저장하고 반환
-    geocode_cache[address] = result
+    # 캐시에 저장
+    geocode_cache[cleaned_address] = result
     save_geocode_cache()
-    return result
+
+    # API로 조회한 경우에만 가볍게 로그 출력
+    if result["lat"] is not None:
+        logging.info(f"[Geocoding API] '{address}' → lat: {result['lat']}, lon: {result['lng']}")
+
+    return {**result, "source": "api"}
+
 
 
 
 # 행정구역 코드 조회
+REGION_CACHE_PATH = "regioncode_cache.json"
+REGION_FAIL_LOG = "failed_regioncodes.log"
+
+if os.path.exists(REGION_CACHE_PATH):
+    with open(REGION_CACHE_PATH, "r", encoding="utf-8") as f:
+        region_cache = json.load(f)
+else:
+    region_cache = {}
+
+def save_region_cache():
+    try:
+        with open(REGION_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(region_cache, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.warning(f"[지역 캐시 저장 실패] {e}")
+
 def get_regioncode(address: str) -> int:
+    if not address:
+        return None
+
+    # 괄호 제거
+    cleaned_address = re.sub(r"\(.*?\)", "", address).strip()
+
+    # 캐시 조회
+    if cleaned_address in region_cache:
+        return region_cache[cleaned_address]
+
+    # API 요청
     url = 'http://apis.data.go.kr/1741000/StanReginCd/getStanReginCdList'
     params = {
         'serviceKey': API_KEY,
         'pageNo': '1',
         'numOfRows': '1',
         'type': 'xml',
-        'locatadd_nm': address,
+        'locatadd_nm': cleaned_address,
     }
     try:
         resp = session_http.get(url, params=params, timeout=5)
@@ -310,10 +392,17 @@ def get_regioncode(address: str) -> int:
         root = ET.fromstring(resp.content)
         row = root.find('.//row')
         if row is not None:
-            return int(row.findtext('locathigh_cd') or 0)
+            region_cd = int(row.findtext('locathigh_cd') or 0)
+            region_cache[cleaned_address] = region_cd
+            save_region_cache()
+            return region_cd
     except Exception as e:
-        logging.warning(f"지역 코드 조회 실패 ({address}): {e}")
+        logging.warning(f"[행정코드 조회 실패] ({cleaned_address}): {e}")
+        with open(REGION_FAIL_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now()} | 실패 주소: {cleaned_address}\n")
+
     return None
+
 
 # ---------------------------------------------------------------------------
 # 통합 데이터 저장 함수
