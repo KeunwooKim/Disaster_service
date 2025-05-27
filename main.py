@@ -236,7 +236,7 @@ def geocoding(address: str) -> dict:
     return result
 
 # 행정구역 코드 조회
-def get_region_code(address: str) -> int:
+def get_regionCode(address: str) -> int:
     url = 'http://apis.data.go.kr/1741000/StanReginCd/getStanReginCdList'
     params = {
         'serviceKey': API_KEY,
@@ -260,18 +260,18 @@ def get_region_code(address: str) -> int:
 # 통합 데이터 저장 함수
 # ---------------------------------------------------------------------------
 def insert_rtd_data(rtd_code, rtd_time, rtd_loc, rtd_details,
-                    region_code=None, latitude=None, longitude=None):
+                    regionCode=None, latitude=None, longitude=None):
     record_str = f"{rtd_code}_{rtd_time.strftime('%Y%m%d%H%M%S')}_{rtd_loc}_{'_'.join(rtd_details)}"
     rec_id = uuid5(NAMESPACE_DNS, record_str)
     q = """
     INSERT INTO rtd_db (
       rtd_code, rtd_time, id, rtd_loc, rtd_details,
-      region_code, latitude, longitude
+      regionCode, latitude, longitude
     ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) IF NOT EXISTS
     """
     params = (
         rtd_code, rtd_time, rec_id, rtd_loc, rtd_details,
-        region_code, latitude, longitude
+        regionCode, latitude, longitude
     )
     if execute_cassandra(q, params):
         logging.info(f"RTD 저장 성공: {rec_id}")
@@ -333,7 +333,7 @@ def get_air_inform():
                 ]
                 for region in bad_regions:
                     coords = geocoding(region)
-                    region_cd = get_region_code(region)
+                    region_cd = get_regionCode(region)
                     # ↓ 여기만 바뀜: print → insert_rtd_data
                     insert_rtd_data(
                         72,
@@ -407,7 +407,7 @@ def get_air_grade():
                 coords = geocoding(sido)
 
             # 행정구역 코드 조회
-            region_cd = get_region_code(station)
+            region_cd = get_regionCode(station)
 
             # RTD 저장
             insert_rtd_data(
