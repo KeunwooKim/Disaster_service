@@ -1173,7 +1173,7 @@ class DisasterMessageCrawler:
 
         messages = []
         # 테이블의 모든 tr 요소를 한 번에 가져와 순회
-        rows = self.driver.find_elements(By.CSS_SELECTOR, "table.basic_table tbody tr")
+        rows = self.driver.find_elements(By.CSS_SELECTOR, "table.boardList_table tbody tr")
         for row in rows:
             row_id = row.get_attribute('id')  # e.g. "disasterSms_tr_0_apiData1"
             try:
