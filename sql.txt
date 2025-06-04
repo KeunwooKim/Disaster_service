@@ -21,3 +21,11 @@ SELECT report_by_id, report_at, report_id, middle_type, small_type,
 FROM user_report
 WHERE report_location IS NOT NULL AND report_at IS NOT NULL AND report_by_id IS NOT NULL
 PRIMARY KEY ((report_location), report_at, report_by_id);
+
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS user_report_by_user_time AS
+SELECT report_by_id, report_at, report_id, middle_type, small_type, report_location,
+       report_content, report_lat, report_lot, visable, delete_vote, vote_id
+FROM user_report
+WHERE report_by_id IS NOT NULL AND report_at IS NOT NULL
+PRIMARY KEY ((report_by_id), report_at);
