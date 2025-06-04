@@ -4,24 +4,24 @@ import logging
 from cassandra.query import SimpleStatement
 from ner_utils import extract_location
 from main import connector, get_regioncode, geocoding, insert_rtd_data
-from tqdm import tqdm  # 진행 바를 위해 tqdm 사용
+from tqdm import tqdm  # 진행 바
 
 def migrate_disaster_messages_to_rtd():
     """
     disaster_message 테이블의 모든 레코드를 읽어서
     extract_location → get_regioncode → geocoding → insert_rtd_data(21, …) 로 rtd_db에 저장
-    진행 상황을 tqdm 진행 바를 사용해 표시합니다.
+    tqdm으로 진행 상황을 표시합니다.
     """
     session = connector.session
 
-    # 전체 행 수를 먼저 조회하여 tqdm에 전달할 total로 사용
+    # 전체 행 수 조회 (tqdm의 total로 사용)
     count_query = SimpleStatement("SELECT COUNT(*) FROM disaster_service.disaster_message")
     count_result = session.execute(count_query).one()
     total_rows = count_result.count if count_result and hasattr(count_result, 'count') else None
 
-    # 모든 레코드 조회
+    # 모든 레코드 조회 (컬럼명을 소문자로 맞춤)
     query = SimpleStatement(
-        "SELECT message_id, emergency_level, DM_ntype, issued_at, issuing_agency, message_content "
+        "SELECT message_id, emergency_level, dm_ntype, issued_at, issuing_agency, message_content "
         "FROM disaster_service.disaster_message"
     )
     rows = session.execute(query)
@@ -29,17 +29,17 @@ def migrate_disaster_messages_to_rtd():
     count_total = 0
     count_inserted = 0
 
-    # tqdm 으로 진행 바 적용 (total_rows가 None인 경우, total 인자를 생략하여 무한 진행 바로 동작)
+    # tqdm 으로 진행 바 적용
     iterator = tqdm(rows, total=total_rows, desc="Migrating messages", unit="msg")
 
     for row in iterator:
         count_total += 1
         try:
-            # (A) 행에서 필요한 필드 꺼내기
+            # (A) 행에서 필요한 필드 꺼내기 (컬럼명은 모두 소문자)
             message_id      = row.message_id
             emergency_level = row.emergency_level
-            dm_ntype        = row.DM_ntype
-            issued_at       = row.issued_at       # Cassandra timestamp → datetime
+            dm_ntype        = row.dm_ntype       # 수정: 소문자 dm_ntype
+            issued_at       = row.issued_at
             issuing_agency  = row.issuing_agency
             content         = row.message_content
 
@@ -60,7 +60,7 @@ def migrate_disaster_messages_to_rtd():
                 lng = None
                 rtd_loc = ""  # 빈 문자열
 
-            # (D) rtd_details 구성: 기존 상세 정보와 동일하게 level, type, content
+            # (D) rtd_details 구성
             rtd_details = [
                 f"level: {emergency_level}",
                 f"type: {dm_ntype}",
