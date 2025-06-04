@@ -17,3 +17,5 @@ SELECT id, rtd_time, rtd_code, rtd_loc, rtd_details, regioncode, latitude, longi
 FROM rtd_db
 WHERE rtd_code IS NOT NULL AND rtd_time IS NOT NULL AND id IS NOT NULL
 PRIMARY KEY ((rtd_code), rtd_time, id);
+
+pip install beautifulsoup4 requests selenium xmltodict konlpy pandas transformers torch datasets geopy python-dotenv cassandra-driver
