@@ -189,6 +189,6 @@ def search_rtd(
     except Exception as e:
         logging.error(f"검색 오류: {e}")
         raise HTTPException(status_code=500, detail="rtd 검색 실패")
-    
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
