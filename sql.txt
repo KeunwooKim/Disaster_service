@@ -1,11 +1,11 @@
 CREATE MATERIALIZED VIEW IF NOT EXISTS rtd_by_loc_time AS
 SELECT id, rtd_time, rtd_loc, rtd_details, rtd_code
 FROM rtd_db
-WHERE rtd_loc IS NOT NULL AND rtd_time IS NOT NULL AND id IS NOT NULL
+WHERE rtd_code IS NOT NULL AND rtd_loc IS NOT NULL AND rtd_time IS NOT NULL AND id IS NOT NULL
 PRIMARY KEY ((rtd_loc), rtd_time, id);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS rtd_by_region_time AS
 SELECT id, rtd_time, regioncode, rtd_loc, rtd_details, rtd_code
 FROM rtd_db
-WHERE regioncode IS NOT NULL AND rtd_time IS NOT NULL AND id IS NOT NULL
+WHERE rtd_code IS NOT NULL AND regioncode IS NOT NULL AND rtd_time IS NOT NULL AND id IS NOT NULL
 PRIMARY KEY ((regioncode), rtd_time, id);
