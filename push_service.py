@@ -117,10 +117,28 @@ def search_rtd(
     """
 
     if rtd_code is None and rtd_loc is None and region_code is None:
-        raise HTTPException(
-            status_code=400,
-            detail="검색 조건 중 하나를 제공해주세요: rtd_code, rtd_loc, region_code"
-        )
+        # 조건이 없는 경우: 최근 N일치 전체 데이터 반환
+        try:
+            query = """
+                SELECT rtd_code, rtd_time, id, rtd_loc, rtd_details
+                FROM rtd_db
+                WHERE rtd_time >= %s AND rtd_time <= %s ALLOW FILTERING
+            """
+            rows = session.execute(query, (start_time, end_time))
+            for row in rows:
+                row_id = str(row.id)
+                if row_id not in seen_ids:
+                    results.append({
+                        "rtd_code": row.rtd_code,
+                        "rtd_time": row.rtd_time.isoformat() if row.rtd_time else None,
+                        "id": row_id,
+                        "rtd_loc": row.rtd_loc,
+                        "rtd_details": row.rtd_details
+                    })
+                    seen_ids.add(row_id)
+        except Exception as e:
+            logging.error(f"rtd_db 검색 에러 (기본검색): {e}")
+            raise HTTPException(status_code=500, detail="rtd_db 검색 실패 (기본검색)")
 
     now = datetime.utcnow()
     try:
