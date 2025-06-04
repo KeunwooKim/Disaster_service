@@ -124,43 +124,37 @@ def search_rtd(
     results = []
 
     try:
-        if rtd_loc is None and regioncode is None and rtd_code is None:
-            query = """
-                SELECT * FROM rtd_by_time
-                WHERE rtd_time >= %s AND rtd_time <= %s
-                ALLOW FILTERING
-            """
-            rows = session.execute(query, (start_time, end_time))
-
-        elif rtd_loc and rtd_code is not None:
+        if rtd_loc:
             query = """
                 SELECT * FROM rtd_by_loc_time
-                WHERE rtd_loc = %s AND rtd_code = %s
-                AND rtd_time >= %s AND rtd_time <= %s
+                WHERE rtd_loc = %s AND rtd_time >= %s AND rtd_time <= %s
                 ALLOW FILTERING
             """
-            rows = session.execute(query, (rtd_loc, rtd_code, start_time, end_time))
+            rows = session.execute(query, (rtd_loc, start_time, end_time))
 
-        elif regioncode and rtd_code is not None:
+        elif regioncode:
             query = """
                 SELECT * FROM rtd_by_region_time
-                WHERE regioncode = %s AND rtd_code = %s
-                AND rtd_time >= %s AND rtd_time <= %s
+                WHERE regioncode = %s AND rtd_time >= %s AND rtd_time <= %s
                 ALLOW FILTERING
             """
-            rows = session.execute(query, (regioncode, rtd_code, start_time, end_time))
+            rows = session.execute(query, (regioncode, start_time, end_time))
 
         elif rtd_code is not None:
             query = """
                 SELECT * FROM rtd_by_code_time
-                WHERE rtd_code = %s
-                AND rtd_time >= %s AND rtd_time <= %s
+                WHERE rtd_code = %s AND rtd_time >= %s AND rtd_time <= %s
                 ALLOW FILTERING
             """
             rows = session.execute(query, (rtd_code, start_time, end_time))
 
         else:
-            raise HTTPException(status_code=400, detail="rtd_loc, regioncode, 또는 rtd_code 중 하나는 필요합니다.")
+            query = """
+                SELECT * FROM rtd_by_code_time
+                WHERE rtd_time >= %s AND rtd_time <= %s
+                ALLOW FILTERING
+            """
+            rows = session.execute(query, (start_time, end_time))
 
         for row in rows:
             results.append({
@@ -169,9 +163,9 @@ def search_rtd(
                 "rtd_loc": row.rtd_loc,
                 "rtd_details": row.rtd_details,
                 "rtd_code": row.rtd_code,
-                "regioncode": row.regioncode if hasattr(row, 'regioncode') else None,
-                "latitude": row.latitude if hasattr(row, 'latitude') else None,
-                "longitude": row.longitude if hasattr(row, 'longitude') else None,
+                "regioncode": getattr(row, 'regioncode', None),
+                "latitude": getattr(row, 'latitude', None),
+                "longitude": getattr(row, 'longitude', None),
             })
 
         return JSONResponse(content={"count": len(results), "results": results})
