@@ -1,21 +1,23 @@
-CREATE MATERIALIZED VIEW IF NOT EXISTS rtd_by_loc_time AS
-SELECT id, rtd_time, rtd_loc, rtd_details, rtd_code, regioncode, latitude, longitude
-FROM rtd_db
-WHERE rtd_loc IS NOT NULL AND rtd_time IS NOT NULL AND id IS NOT NULL
-PRIMARY KEY ((rtd_loc), rtd_time, id);
+CREATE TABLE IF NOT EXISTS user_report (
+    report_by_id TEXT,              -- 제보자 ID (파티션 키)
+    report_at TIMESTAMP,           -- 제보 시각 (클러스터링 키)
+    report_id UUID,                -- 제보 고유 ID (중복 방지용 UUID)
+    middle_type TEXT,              -- 재난 중분류
+    small_type TEXT,               -- 재난 소분류
+    report_location TEXT,          -- 제보 위치
+    report_content TEXT,           -- 제보 내용
+    report_lat FLOAT,              -- 위도
+    report_lot FLOAT,              -- 경도
+    visible BOOLEAN,               -- 삭제 여부 (visable 오타 수정)
+    delete_vote INT,               -- 삭제 요청 수
+    vote_id LIST<UUID>,            -- 삭제 요청한 사용자 ID 목록
+    PRIMARY KEY ((report_by_id), report_at)
+) WITH CLUSTERING ORDER BY (report_at DESC);
 
-
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS rtd_by_region_time AS
-SELECT id, rtd_time, regioncode, rtd_loc, rtd_details, rtd_code, latitude, longitude
-FROM rtd_db
-WHERE regioncode IS NOT NULL AND rtd_time IS NOT NULL AND id IS NOT NULL
-PRIMARY KEY ((regioncode), rtd_time, id);
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS rtd_by_code_time AS
-SELECT id, rtd_time, rtd_code, rtd_loc, rtd_details, regioncode, latitude, longitude
-FROM rtd_db
-WHERE rtd_code IS NOT NULL AND rtd_time IS NOT NULL AND id IS NOT NULL
-PRIMARY KEY ((rtd_code), rtd_time, id);
-
-pip install beautifulsoup4 requests selenium xmltodict konlpy pandas transformers torch datasets geopy python-dotenv cassandra-driver
+CREATE MATERIALIZED VIEW IF NOT EXISTS user_report_by_location_time AS
+SELECT report_by_id, report_at, report_id, middle_type, small_type,
+       report_location, report_content, report_lat, report_lot,
+       visible, delete_vote, vote_id
+FROM user_report
+WHERE report_location IS NOT NULL AND report_at IS NOT NULL AND report_by_id IS NOT NULL
+PRIMARY KEY ((report_location), report_at, report_by_id);
