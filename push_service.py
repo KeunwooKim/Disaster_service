@@ -7,7 +7,7 @@ from cassandra.auth import PlainTextAuthProvider
 import os
 from dotenv import load_dotenv
 from typing import Optional
-
+from datetime import datetime, timedelta 
 # 환경 변수 로드 (.env 파일 활용)
 load_dotenv()
 CASSANDRA_HOST = os.getenv("CASSANDRA_HOST", "127.0.0.1")
