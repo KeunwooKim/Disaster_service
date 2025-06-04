@@ -111,8 +111,15 @@ def search_rtd(
 ):
     """
     재난 정보 검색 API
+    - rtd_loc: 장소 기반 검색
+    - regioncode: 지역코드 기반 검색
+    - rtd_code: 재난코드 (선택)
+    - from_time, to_time: ISO 8601 시간 필터
+    - days: 시간 필터 기본값 1일
     """
+
     now = datetime.utcnow()
+
     try:
         if from_time and to_time:
             start_time = datetime.fromisoformat(from_time)
@@ -121,87 +128,67 @@ def search_rtd(
             end_time = now
             start_time = now - timedelta(days=days)
     except ValueError:
-        raise HTTPException(status_code=400, detail="시간 형식이 잘못되었습니다. ISO 8601 형식으로 입력해주세요.")
+        raise HTTPException(status_code=400, detail="시간 형식이 잘못되었습니다 (ISO 8601)")
 
+    start_str = start_time.isoformat()
+    end_str = end_time.isoformat()
     results = []
-    seen_ids = set()
 
-    # 1. 지역명 + 재난코드
-    if rtd_loc and rtd_code:
-        try:
+    try:
+        # 1. 조건 없음 → 전체 시간 기준 최신 데이터 (rtd_by_time)
+        if rtd_loc is None and regioncode is None:
             query = """
-                SELECT id, rtd_time, rtd_loc, rtd_details, rtd_code
-                FROM rtd_by_loc_time
-                WHERE rtd_loc = %s AND rtd_code = %s AND rtd_time >= %s AND rtd_time <= %s
-            """
-            rows = session.execute(query, (rtd_loc, rtd_code, start_time, end_time))
-            for row in rows:
-                row_id = str(row.id)
-                if row_id not in seen_ids:
-                    results.append({
-                        "id": row_id,
-                        "rtd_time": row.rtd_time.isoformat(),
-                        "rtd_loc": row.rtd_loc,
-                        "rtd_details": row.rtd_details,
-                        "rtd_code": row.rtd_code
-                    })
-                    seen_ids.add(row_id)
-        except Exception as e:
-            logging.error(f"[rtd_by_loc_time] 조회 실패: {e}")
-            raise HTTPException(status_code=500, detail="지역 기반 검색 실패")
-
-    # 2. 지역코드 + 재난코드
-    elif regioncode and rtd_code:
-        try:
-            query = """
-                SELECT id, rtd_time, regioncode, rtd_loc, rtd_details, rtd_code
-                FROM rtd_by_region_time
-                WHERE regioncode = %s AND rtd_code = %s AND rtd_time >= %s AND rtd_time <= %s
-            """
-            rows = session.execute(query, (regioncode, rtd_code, start_time, end_time))
-            for row in rows:
-                row_id = str(row.id)
-                if row_id not in seen_ids:
-                    results.append({
-                        "id": row_id,
-                        "rtd_time": row.rtd_time.isoformat(),
-                        "rtd_loc": row.rtd_loc,
-                        "rtd_details": row.rtd_details,
-                        "rtd_code": row.rtd_code
-                    })
-                    seen_ids.add(row_id)
-        except Exception as e:
-            logging.error(f"[rtd_by_region_time] 조회 실패: {e}")
-            raise HTTPException(status_code=500, detail="지역코드 기반 검색 실패")
-
-    # 3. 조건이 모두 없는 경우: 최근 하루치
-    elif not rtd_loc and not regioncode and not rtd_code:
-        try:
-            query = """
-                SELECT id, rtd_time, rtd_loc, rtd_details, rtd_code
-                FROM rtd_by_time
+                SELECT * FROM rtd_by_time
                 WHERE rtd_time >= %s AND rtd_time <= %s
+                ALLOW FILTERING
             """
             rows = session.execute(query, (start_time, end_time))
-            for row in rows:
-                row_id = str(row.id)
-                if row_id not in seen_ids:
-                    results.append({
-                        "id": row_id,
-                        "rtd_time": row.rtd_time.isoformat(),
-                        "rtd_loc": row.rtd_loc,
-                        "rtd_details": row.rtd_details,
-                        "rtd_code": row.rtd_code
-                    })
-                    seen_ids.add(row_id)
-        except Exception as e:
-            logging.error(f"[rtd_by_time] 기본 검색 실패: {e}")
-            raise HTTPException(status_code=500, detail="기본 검색 실패")
 
-    else:
-        raise HTTPException(status_code=400, detail="rtd_loc + rtd_code 또는 regioncode + rtd_code 조합을 사용하거나 조건 없이 요청해주세요.")
+        # 2. rtd_loc 기반 조회 (rtd_by_loc_time)
+        elif rtd_loc:
+            if rtd_code is None:
+                raise HTTPException(status_code=400, detail="rtd_loc 사용 시 rtd_code도 필요합니다.")
+            query = """
+                SELECT * FROM rtd_by_loc_time
+                WHERE rtd_loc = %s AND rtd_code = %s
+                AND rtd_time >= %s AND rtd_time <= %s
+                ALLOW FILTERING
+            """
+            rows = session.execute(query, (rtd_loc, rtd_code, start_time, end_time))
 
-    return JSONResponse(content={"results": results, "count": len(results)})
+        # 3. regioncode 기반 조회 (rtd_by_region_time)
+        elif regioncode:
+            if rtd_code is None:
+                raise HTTPException(status_code=400, detail="regioncode 사용 시 rtd_code도 필요합니다.")
+            query = """
+                SELECT * FROM rtd_by_region_time
+                WHERE regioncode = %s AND rtd_code = %s
+                AND rtd_time >= %s AND rtd_time <= %s
+                ALLOW FILTERING
+            """
+            rows = session.execute(query, (regioncode, rtd_code, start_time, end_time))
 
+        else:
+            raise HTTPException(status_code=400, detail="rtd_loc 또는 regioncode 중 하나는 필요합니다.")
+
+        # 결과 정리
+        for row in rows:
+            results.append({
+                "id": str(row.id),
+                "rtd_time": row.rtd_time.isoformat() if row.rtd_time else None,
+                "rtd_loc": row.rtd_loc,
+                "rtd_details": row.rtd_details,
+                "rtd_code": row.rtd_code,
+                "regioncode": row.regioncode if hasattr(row, 'regioncode') else None,
+                "latitude": row.latitude if hasattr(row, 'latitude') else None,
+                "longitude": row.longitude if hasattr(row, 'longitude') else None,
+            })
+
+        return JSONResponse(content={"count": len(results), "results": results})
+
+    except Exception as e:
+        logging.error(f"검색 오류: {e}")
+        raise HTTPException(status_code=500, detail="rtd 검색 실패")
+    
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
