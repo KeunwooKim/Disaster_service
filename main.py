@@ -25,6 +25,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.chrome.service import Service
 import pandas as pd
 from functools import partial
+from ner_utils import extract_location
 
 # ---------------------------------------------------------------------------
 # 설정 및 전역변수
@@ -1031,27 +1032,80 @@ class DisasterMessageCrawler:
                                       (msg_id,))
         return result.one() is not None
 
-    def backup_messages(self, messages):
-        from cassandra.query import SimpleStatement
-        for msg in messages:
-            logging.info(f"✅ INSERT 시도 중: {msg['message_id']}")
-            try:
-                self.session.execute(SimpleStatement("""
-                    INSERT INTO disaster_message (
-                        message_id, emergency_level, DM_ntype, DM_stype, issuing_agency, issued_at, message_content
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s) IF NOT EXISTS
-                """), (
-                    int(msg['message_id']),
-                    msg['emergency_level'],
-                    msg['DM_ntype'],
-                    msg['DM_stype'],
-                    msg['issuing_agency'],
-                    msg['issued_at'],
-                    msg['message_content']
-                ))
-                logging.info(f"✅ 저장 성공: {msg['message_id']}")
-            except Exception as e:
-                logging.error(f"❌ 저장 실패: {msg['message_id']} → {e}")
+    class DisasterMessageCrawler:
+        # ... __init__ 등 기존 코드 생략 ...
+
+        def backup_messages(self, messages):
+            from cassandra.query import SimpleStatement
+
+            for msg in messages:
+                logging.info(f"✅ disaster_message INSERT 시도 중: {msg['message_id']}")
+                try:
+                    # 1) 우선 disaster_message 테이블에 저장
+                    self.session.execute(SimpleStatement("""
+                        INSERT INTO disaster_message (
+                            message_id, emergency_level, DM_ntype, DM_stype,
+                            issuing_agency, issued_at, message_content
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s) IF NOT EXISTS
+                    """), (
+                        int(msg['message_id']),
+                        msg['emergency_level'],
+                        msg['DM_ntype'],
+                        msg['DM_stype'],
+                        msg['issuing_agency'],
+                        msg['issued_at'],
+                        msg['message_content']
+                    ))
+                    logging.info(f"✅ disaster_message 저장 성공: {msg['message_id']}")
+
+                    # 2) NER 모델로 메시지 내용에서 지역(장소) 추출
+                    full_text = msg['message_content']
+                    extracted_region = extract_location(full_text)  # e.g. "창녕군"
+                    logging.info(f"🔍 추출된 지역: '{extracted_region}'")
+
+                    # 3) 추출된 지역이 있으면 get_regioncode + geocoding,
+                    #    없으면 None 또는 빈 문자열 처리
+                    if extracted_region:
+                        # (3-1) 행정구역 코드 조회
+                        region_cd = get_regioncode(extracted_region)
+                        logging.info(f"🏷 행정구역 코드: {region_cd}")
+
+                        # (3-2) 위·경도 조회
+                        coords = geocoding(extracted_region)
+                        lat = float(coords['lat']) if coords.get('lat') else None
+                        lng = float(coords['lng']) if coords.get('lng') else None
+                        logging.info(f"📍 위도·경도: ({lat}, {lng})")
+
+                        rtd_loc = extracted_region
+                    else:
+                        # 위치 엔티티가 없을 때
+                        region_cd = None
+                        lat = None
+                        lng = None
+                        rtd_loc = ""  # 빈 문자열로 저장
+                        logging.info("⚠️ 메시지에서 지역명 추출되지 않음 → rtd_loc을 ''로 설정")
+
+                    # 4) rtd_db에 저장 (문자코드 = 21)
+                    rtd_time = msg['issued_at']  # 이미 datetime 객체라고 가정
+                    rtd_details = [
+                        f"level: {msg['emergency_level']}",
+                        f"type: {msg['DM_ntype']}",
+                        f"content: {msg['message_content']}"
+                    ]
+
+                    insert_rtd_data(
+                        21,  # 재난문자 전용 코드
+                        rtd_time,  # 발송 시각 (UTC 변환된 datetime)
+                        rtd_loc,  # 추출된 지역명(없으면 빈 문자열)
+                        rtd_details,  # 상세 정보 리스트
+                        region_cd,  # 행정구역 코드 또는 None
+                        lat,  # 위도(float) 또는 None
+                        lng  # 경도(float) 또는 None
+                    )
+                    logging.info(f"✅ rtd_db({rtd_loc}, code={region_cd}) 저장 완료")
+
+                except Exception as e:
+                    logging.error(f"❌ disaster_message/RTD 저장 실패: {msg['message_id']} → {e}")
 
     def check_and_save(self):
         messages = self.check_messages()
