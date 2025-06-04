@@ -1,9 +1,9 @@
 from transformers import BertTokenizerFast, BertForTokenClassification
 import torch
-
+import os
 # 모델 경로
-MODEL_PATH = "/Users/keunwookim/Documents/Python/DisasterMessage_NER/ner_model"
-
+BASE_DIR = os.path.dirname(__file__)
+MODEL_PATH = os.path.join(BASE_DIR, "ner_model")
 # 토크나이저·모델 로드
 tokenizer_loc = BertTokenizerFast.from_pretrained(MODEL_PATH)
 model_loc = BertForTokenClassification.from_pretrained(MODEL_PATH)
