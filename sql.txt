@@ -20,5 +20,5 @@ WHERE report_location IS NOT NULL
   AND report_id IS NOT NULL
   AND report_by_id IS NOT NULL
   AND visible = true
-PRIMARY KEY ((report_location), report_at, report_id);
+PRIMARY KEY ((report_location), report_by_id, report_at);
 
