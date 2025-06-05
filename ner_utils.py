@@ -93,9 +93,11 @@ def extract_location(text: str) -> str:
     if current_start is not None and current_end is not None:
         locations.append((current_start, current_end))
 
-    # (4) 여러 개의 위치가 예측될 수 있지만, 보통 첫 번째만 사용
+    # (4) 여러 개의 위치가 예측될 수 있지만, 보통 가장 긴 것 사용
     if locations:
-        # locations[0]이 (start_char, end_char)
-        s, e = locations[0]
-        return text[s:e]
+        best = max(locations, key=lambda x: x[1] - x[0])  # 길이 기준
+        s, e = best
+        extracted = text[s:e]
+        return extracted if len(extracted) >= 2 else ""
     return ""
+
