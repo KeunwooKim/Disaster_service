@@ -1,31 +1,5 @@
-CREATE TABLE IF NOT EXISTS user_report (
-    report_by_id TEXT,              -- 제보자 ID (파티션 키)
-    report_at TIMESTAMP,           -- 제보 시각 (클러스터링 키)
-    report_id UUID,                -- 제보 고유 ID (중복 방지용 UUID)
-    middle_type TEXT,              -- 재난 중분류
-    small_type TEXT,               -- 재난 소분류
-    report_location TEXT,          -- 제보 위치
-    report_content TEXT,           -- 제보 내용
-    report_lat FLOAT,              -- 위도
-    report_lot FLOAT,              -- 경도
-    visible BOOLEAN,               -- 삭제 여부 (visable 오타 수정)
-    delete_vote INT,               -- 삭제 요청 수
-    vote_id LIST<UUID>,            -- 삭제 요청한 사용자 ID 목록
-    PRIMARY KEY ((report_by_id), report_at)
-) WITH CLUSTERING ORDER BY (report_at DESC);
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS user_report_by_location_time AS
-SELECT report_by_id, report_at, report_id, middle_type, small_type,
-       report_location, report_content, report_lat, report_lot,
-       visible, delete_vote, vote_id
-FROM user_report
-WHERE report_location IS NOT NULL AND report_at IS NOT NULL AND report_by_id IS NOT NULL
-PRIMARY KEY ((report_location), report_at, report_by_id);
-
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS user_report_by_user_time AS
-SELECT report_by_id, report_at, report_id, middle_type, small_type, report_location,
-       report_content, report_lat, report_lot, visable, delete_vote, vote_id
-FROM user_report
-WHERE report_by_id IS NOT NULL AND report_at IS NOT NULL
-PRIMARY KEY ((report_by_id), report_at);
+CREATE TABLE IF NOT EXISTS user_device (
+    user_id TEXT PRIMARY KEY,
+    device_token TEXT,
+    registered_at TIMESTAMP
+);
