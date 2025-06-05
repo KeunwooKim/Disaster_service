@@ -9,3 +9,11 @@ SELECT user_id, device_token, registered_at
 FROM user_device
 WHERE device_token IS NOT NULL AND user_id IS NOT NULL
 PRIMARY KEY (device_token, user_id);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS user_report_visible_by_location_time AS
+SELECT report_by_id, report_at, report_id, middle_type, small_type,
+       report_location, report_content, report_lat, report_lot,
+       visible, delete_vote, vote_id
+FROM user_report_by_location_time
+WHERE report_location IS NOT NULL AND report_at IS NOT NULL AND visible = true
+PRIMARY KEY ((report_location), report_at, report_id);

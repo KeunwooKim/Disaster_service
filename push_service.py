@@ -262,6 +262,35 @@ def get_reports_by_user(
     except Exception as e:
         logging.error(f"사용자 제보 조회 실패: {e}")
         raise HTTPException(status_code=500, detail="사용자 제보 조회 실패")
+
+class DeleteReportRequest(BaseModel):
+    report_id: UUID
+    user_id: str
+
+@app.delete("/report/delete")
+def delete_user_report(data: DeleteReportRequest):
+    try:
+        # 1. 해당 report_id가 존재하는지 확인
+        query = "SELECT report_by_id FROM user_report_by_id WHERE report_id = %s"
+        result = session.execute(query, (data.report_id,)).one()
+
+        if not result:
+            raise HTTPException(status_code=404, detail="해당 제보를 찾을 수 없습니다.")
+
+        # 2. 작성자 일치 여부 확인
+        if result.report_by_id != data.user_id:
+            raise HTTPException(status_code=403, detail="해당 제보의 작성자가 아닙니다.")
+
+        # 3. 삭제 (실제 삭제 대신 visible=False 처리할 수도 있음)
+        delete_query = "DELETE FROM user_report_by_id WHERE report_id = %s"
+        session.execute(delete_query, (data.report_id,))
+
+        return {"message": "제보가 삭제되었습니다."}
+
+    except Exception as e:
+        logging.error(f"제보 삭제 실패: {e}")
+        raise HTTPException(status_code=500, detail="제보 삭제 실패")
+
 @app.get("/rtd/search")
 def search_rtd(
     rtd_loc: Optional[str] = None,
@@ -330,12 +359,11 @@ def search_rtd(
                 "longitude": getattr(row, 'longitude', None),
             })
 
-        # === 2) 제보 데이터 조회 ===
+        # === 2) 제보 데이터 조회 (visible = True만 포함된 MV 사용) ===
         if rtd_loc:
             report_query = """
-                SELECT * FROM user_report_by_location_time
+                SELECT * FROM user_report_visible_by_location_time
                 WHERE report_location = %s AND report_at >= %s AND report_at <= %s
-                ALLOW FILTERING
             """
             report_rows = session.execute(report_query, (rtd_loc, start_time, end_time))
 
