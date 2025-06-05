@@ -346,31 +346,29 @@ def search_rtd(
                 "longitude": getattr(row, 'longitude', None),
             })
 
-        # === 2) user_report 테이블에서 visible=True만 필터링 ===
-        if rtd_loc:
-            # === 2) 제보 데이터 조회 (visible=True 조건 추가) ===
-            report_query = """
-                SELECT * FROM user_report_by_time
-                WHERE report_at >= %s AND report_at <= %s
-                ALLOW FILTERING
-            """
-            report_rows = session.execute(report_query, (start_time, end_time))
+        # === 2) 제보 데이터 조회 (조건 없이 항상 실행) ===
+        report_query = """
+            SELECT * FROM user_report_by_time
+            WHERE report_at >= %s AND report_at <= %s
+            ALLOW FILTERING
+        """
+        report_rows = session.execute(report_query, (start_time, end_time))
 
-            for row in report_rows:
-                if getattr(row, 'visible', True):  # visible이 True인 데이터만 출력
-                    report_results.append({
-                        "type": "report",
-                        "report_id": str(row.report_id),
-                        "report_time": row.report_at.isoformat() if row.report_at else None,
-                        "report_location": row.report_location,
-                        "middle_type": row.middle_type,
-                        "small_type": row.small_type,
-                        "content": row.report_content,
-                        "report_by": row.report_by_id,
-                        "latitude": row.report_lat,
-                        "longitude": row.report_lot,
-                        "delete_vote": row.delete_vote
-                    })
+        for row in report_rows:
+            if getattr(row, 'visible', True):  # visible=True 조건
+                report_results.append({
+                    "type": "report",
+                    "report_id": str(row.report_id),
+                    "report_time": row.report_at.isoformat() if row.report_at else None,
+                    "report_location": row.report_location,
+                    "middle_type": row.middle_type,
+                    "small_type": row.small_type,
+                    "content": row.report_content,
+                    "report_by": row.report_by_id,
+                    "latitude": row.report_lat,
+                    "longitude": row.report_lot,
+                    "delete_vote": row.delete_vote
+                })
 
         return JSONResponse(content={
             "count": len(rtd_results) + len(report_results),
