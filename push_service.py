@@ -359,28 +359,30 @@ def search_rtd(
                 "longitude": getattr(row, 'longitude', None),
             })
 
-        # === 2) 제보 데이터 조회 (visible = True인 것만 MV에서 조회) ===
+        # === 2) user_report 테이블에서 visible=True만 필터링 ===
         if rtd_loc:
             report_query = """
-                SELECT * FROM user_report_visible_by_location_time
+                SELECT * FROM user_report
                 WHERE report_location = %s AND report_at >= %s AND report_at <= %s
+                ALLOW FILTERING
             """
             report_rows = session.execute(report_query, (rtd_loc, start_time, end_time))
 
             for row in report_rows:
-                report_results.append({
-                    "type": "report",
-                    "report_id": str(row.report_id),
-                    "report_time": row.report_at.isoformat() if row.report_at else None,
-                    "report_location": row.report_location,
-                    "middle_type": row.middle_type,
-                    "small_type": row.small_type,
-                    "content": row.report_content,
-                    "report_by": row.report_by_id,
-                    "latitude": row.report_lat,
-                    "longitude": row.report_lot,
-                    "delete_vote": row.delete_vote
-                })
+                if row.visible:  # ✅ visible = True 조건
+                    report_results.append({
+                        "type": "report",
+                        "report_id": str(row.report_id),
+                        "report_time": row.report_at.isoformat() if row.report_at else None,
+                        "report_location": row.report_location,
+                        "middle_type": row.middle_type,
+                        "small_type": row.small_type,
+                        "content": row.report_content,
+                        "report_by": row.report_by_id,
+                        "latitude": row.report_lat,
+                        "longitude": row.report_lot,
+                        "delete_vote": row.delete_vote
+                    })
 
         return JSONResponse(content={
             "count": len(rtd_results) + len(report_results),
@@ -391,6 +393,7 @@ def search_rtd(
     except Exception as e:
         logging.error(f"검색 오류: {e}")
         raise HTTPException(status_code=500, detail="rtd/search 통합 검색 실패")
+
 
 # 사용자 디바이스 요청 모델
 class UserDeviceRequest(BaseModel):
