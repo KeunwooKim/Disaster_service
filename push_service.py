@@ -350,7 +350,7 @@ def search_rtd(
         if rtd_loc:
             # === 2) 제보 데이터 조회 (visible=True 조건 추가) ===
             report_query = """
-                SELECT * FROM user_report
+                SELECT * FROM user_report_by_time
                 WHERE report_at >= %s AND report_at <= %s
                 ALLOW FILTERING
             """

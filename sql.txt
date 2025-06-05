@@ -1,24 +1,7 @@
-CREATE TABLE IF NOT EXISTS user_device (
-    user_id TEXT PRIMARY KEY,
-    device_token TEXT,
-    registered_at TIMESTAMP
-);
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS user_device_by_token AS
-SELECT user_id, device_token, registered_at
-FROM user_device
-WHERE device_token IS NOT NULL AND user_id IS NOT NULL
-PRIMARY KEY (device_token, user_id);
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS user_report_visible_by_location_time AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS user_report_by_time AS
 SELECT report_by_id, report_at, report_id, middle_type, small_type,
        report_location, report_content, report_lat, report_lot,
        visible, delete_vote, vote_id
 FROM user_report
-WHERE report_location IS NOT NULL
-  AND report_at IS NOT NULL
-  AND report_id IS NOT NULL
-  AND report_by_id IS NOT NULL
-  AND visible = true
-PRIMARY KEY ((report_location), report_by_id, report_at);
-
+WHERE report_by_id IS NOT NULL AND report_at IS NOT NULL AND report_id IS NOT NULL
+PRIMARY KEY ((report_at), report_id, report_by_id);
