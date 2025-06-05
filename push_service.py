@@ -73,19 +73,6 @@ def get_test_events():
         logging.error(f"Cassandra 조회 에러: {e}")
         raise HTTPException(status_code=500, detail="Cassandra 조회 실패")
 
-@app.get("/test")
-def test(test_id: Optional[str], test_code: Optional[str] = None):
-    if test_id is None and test_code is None:
-        raise HTTPException(
-            status_code=404,
-            detail="값이 비었습니다"
-        )
-    if test_id is not None and test_code is not None:
-        result = []
-        result.append({"test_id": test_id, "test_code": test_code})
-        print(result)
-        return JSONResponse(content={"results": result, "count": len(result)})
-
 
 @app.get("/userReport/history")
 def get_user_report_history(
@@ -361,15 +348,16 @@ def search_rtd(
 
         # === 2) user_report 테이블에서 visible=True만 필터링 ===
         if rtd_loc:
+            # === 2) 제보 데이터 조회 (visible=True 조건 추가) ===
             report_query = """
                 SELECT * FROM user_report
-                WHERE report_location = %s AND report_at >= %s AND report_at <= %s
+                WHERE report_at >= %s AND report_at <= %s
                 ALLOW FILTERING
             """
-            report_rows = session.execute(report_query, (rtd_loc, start_time, end_time))
+            report_rows = session.execute(report_query, (start_time, end_time))
 
             for row in report_rows:
-                if row.visible:  # ✅ visible = True 조건
+                if getattr(row, 'visible', True):  # visible이 True인 데이터만 출력
                     report_results.append({
                         "type": "report",
                         "report_id": str(row.report_id),
