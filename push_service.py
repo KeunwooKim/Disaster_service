@@ -134,7 +134,6 @@ def get_user_report_history(
     except Exception as e:
         logging.error(f"사용자 제보 내역 조회 실패: {e}")
         raise HTTPException(status_code=500, detail="사용자 제보 조회 실패")
-
 @app.post("/userReport")
 def create_user_report(
     userId: str,
@@ -146,10 +145,17 @@ def create_user_report(
     longitude: Optional[float] = None
 ):
     try:
+        # 사용자 존재 여부 확인
+        check_query = "SELECT user_id FROM user_device WHERE user_id = %s"
+        result = session.execute(check_query, (userId,)).one()
+
+        if result is None:
+            raise HTTPException(status_code=404, detail="사용자 정보가 존재하지 않습니다.")
+
         report_time = datetime.fromisoformat(disasterTime) if disasterTime else datetime.utcnow()
         report_id = uuid4()
 
-        query = """
+        insert_query = """
             INSERT INTO user_report (
                 report_by_id, report_at, report_id, middle_type, small_type,
                 report_location, report_content, report_lat, report_lot,
@@ -158,7 +164,7 @@ def create_user_report(
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, true, 0, [])
         """
 
-        session.execute(query, (
+        session.execute(insert_query, (
             userId,
             report_time,
             report_id,
@@ -172,6 +178,8 @@ def create_user_report(
 
         return {"message": "제보가 성공적으로 저장되었습니다.", "report_id": str(report_id)}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"제보 저장 실패: {e}")
         raise HTTPException(status_code=500, detail="제보 저장 실패")
@@ -356,6 +364,95 @@ def search_rtd(
         logging.error(f"검색 오류: {e}")
         raise HTTPException(status_code=500, detail="rtd/search 통합 검색 실패")
 
+# 사용자 디바이스 요청 모델
+class UserDeviceRequest(BaseModel):
+    user_id: str
+    device_token: str
+
+# 디바이스 등록 API
+@app.post("/devices/register")
+def register_device(data: UserDeviceRequest):
+    try:
+        # user_id 중복 확인
+        check_user_query = "SELECT * FROM user_device WHERE user_id = %s"
+        existing_user = session.execute(check_user_query, (data.user_id,)).one()
+        if existing_user:
+            return JSONResponse(
+                status_code=400,
+                content={"message": f"이미 등록된 user_id입니다: {data.user_id}"}
+            )
+
+        # device_token 중복 확인 (중복이면 실패 처리)
+        check_token_query = "SELECT user_id FROM user_device WHERE device_token = %s ALLOW FILTERING"
+        duplicate = session.execute(check_token_query, (data.device_token,)).one()
+        if duplicate:
+            return JSONResponse(
+                status_code=400,
+                content={"message": f"이미 다른 사용자에 등록된 device_token입니다: {data.device_token}"}
+            )
+
+        # 디바이스 등록
+        insert_query = "INSERT INTO user_device (user_id, device_token) VALUES (%s, %s)"
+        session.execute(insert_query, (data.user_id, data.device_token))
+
+        return {"message": "사용자 디바이스 정보가 등록되었습니다."}
+    except Exception as e:
+        logging.error(f"디바이스 등록 실패: {e}")
+        raise HTTPException(status_code=500, detail="디바이스 등록 실패")
+
+# 디바이스 토큰 수정 API
+@app.put("/devices/update")
+def update_device_token(data: UserDeviceRequest):
+    try:
+        # user_id 존재 확인
+        check_user_query = "SELECT * FROM user_device WHERE user_id = %s"
+        user = session.execute(check_user_query, (data.user_id,)).one()
+        if not user:
+            return JSONResponse(
+                status_code=404,
+                content={"message": f"존재하지 않는 user_id입니다: {data.user_id}"}
+            )
+
+        # device_token 중복 검사
+        check_token_query = "SELECT user_id FROM user_device WHERE device_token = %s ALLOW FILTERING"
+        duplicate = session.execute(check_token_query, (data.device_token,)).one()
+        if duplicate and duplicate.user_id != data.user_id:
+            return JSONResponse(
+                status_code=400,
+                content={"message": f"이미 다른 사용자에 등록된 device_token입니다: {data.device_token}"}
+            )
+
+        # 토큰 업데이트
+        update_query = "UPDATE user_device SET device_token = %s WHERE user_id = %s"
+        session.execute(update_query, (data.device_token, data.user_id))
+
+        return {"message": "디바이스 토큰이 성공적으로 수정되었습니다."}
+    except Exception as e:
+        logging.error(f"디바이스 토큰 수정 실패: {e}")
+        raise HTTPException(status_code=500, detail="디바이스 토큰 수정 실패")
+
+# 디바이스 조회 API (전체 또는 특정 사용자)
+@app.get("/devices")
+def get_devices(user_id: Optional[str] = Query(None, description="user_id로 필터링")):
+    try:
+        if user_id:
+            query = "SELECT * FROM user_device WHERE user_id = %s"
+            rows = session.execute(query, (user_id,))
+        else:
+            query = "SELECT * FROM user_device"
+            rows = session.execute(query)
+
+        results = []
+        for row in rows:
+            results.append({
+                "user_id": row.user_id,
+                "device_token": row.device_token
+            })
+
+        return {"count": len(results), "devices": results}
+    except Exception as e:
+        logging.error(f"디바이스 조회 실패: {e}")
+        raise HTTPException(status_code=500, detail="디바이스 조회 실패")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

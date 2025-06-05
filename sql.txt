@@ -4,8 +4,8 @@ CREATE TABLE IF NOT EXISTS user_device (
     registered_at TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS user_device (
-    user_id TEXT PRIMARY KEY,
-    device_token TEXT,
-    registered_at TIMESTAMP
-);
+CREATE MATERIALIZED VIEW IF NOT EXISTS user_device_by_token AS
+SELECT user_id, device_token, registered_at
+FROM user_device
+WHERE device_token IS NOT NULL AND user_id IS NOT NULL
+PRIMARY KEY (device_token, user_id);
