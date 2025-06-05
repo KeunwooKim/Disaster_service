@@ -8,6 +8,12 @@ import os
 from dotenv import load_dotenv
 from typing import Optional
 from datetime import datetime, timedelta
+from uuid import UUID
+from pydantic import BaseModel
+
+from uuid import uuid4
+from fastapi import Query
+
 # 환경 변수 로드 (.env 파일 활용)
 load_dotenv()
 CASSANDRA_HOST = os.getenv("CASSANDRA_HOST", "127.0.0.1")
@@ -80,8 +86,6 @@ def test(test_id: Optional[str], test_code: Optional[str] = None):
         print(result)
         return JSONResponse(content={"results": result, "count": len(result)})
 
-from uuid import uuid4
-from fastapi import Query
 
 @app.get("/userReport/history")
 def get_user_report_history(
@@ -121,7 +125,7 @@ def get_user_report_history(
                 "report_content": row.report_content,
                 "latitude": row.report_lat,
                 "longitude": row.report_lot,
-                "visable": row.visable,
+                "visible": row.visible,
                 "delete_vote": row.delete_vote
             })
 
@@ -149,7 +153,7 @@ def create_user_report(
             INSERT INTO user_report (
                 report_by_id, report_at, report_id, middle_type, small_type,
                 report_location, report_content, report_lat, report_lot,
-                visable, delete_vote, vote_id
+                visible, delete_vote, vote_id
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, true, 0, [])
         """
@@ -172,7 +176,84 @@ def create_user_report(
         logging.error(f"제보 저장 실패: {e}")
         raise HTTPException(status_code=500, detail="제보 저장 실패")
 
+class VoteByIDRequest(BaseModel):
+    report_id: UUID
+    user_id: str
 
+@app.post("/report/vote_by_id")
+def vote_to_delete_by_report_id(data: VoteByIDRequest):
+    try:
+        # 1. 기존 데이터 조회
+        query = "SELECT delete_vote, vote_id, visible FROM user_report_by_id WHERE report_id = %s"
+        row = session.execute(query, (data.report_id,)).one()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="해당 제보를 찾을 수 없습니다.")
+
+        vote_ids = row.vote_id or []
+        if data.user_id in vote_ids:
+            raise HTTPException(status_code=400, detail="이미 이 제보에 투표하셨습니다.")
+
+        # 2. 투표 추가 및 비활성 여부 판단
+        vote_ids.append(data.user_id)
+        new_count = (row.delete_vote or 0) + 1
+        visible_flag = False if new_count >= 10 else True
+
+        # 3. 업데이트
+        update_q = """
+            UPDATE user_report_by_id
+            SET vote_id = %s,
+                delete_vote = %s,
+                visible = %s
+            WHERE report_id = %s
+        """
+        session.execute(update_q, (vote_ids, new_count, visible_flag, data.report_id))
+
+        return JSONResponse(content={
+            "message": "투표 완료",
+            "delete_vote": new_count,
+            "visible": visible_flag
+        })
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/report/user_history")
+def get_reports_by_user(
+    user_id: str = Query(..., description="제보자 ID"),
+    limit: int = 50
+):
+    try:
+        query = """
+            SELECT report_at, report_id, middle_type, small_type,
+                   report_location, report_content,
+                   report_lat, report_lot, visible, delete_vote, vote_id
+            FROM user_report_by_user_time
+            WHERE report_by_id = %s
+            LIMIT %s
+        """
+        rows = session.execute(query, (user_id, limit))
+
+        results = []
+        for row in rows:
+            results.append({
+                "report_id": str(row.report_id),
+                "report_at": row.report_at.isoformat() if row.report_at else None,
+                "middle_type": row.middle_type,
+                "small_type": row.small_type,
+                "report_location": row.report_location,
+                "report_content": row.report_content,
+                "latitude": row.report_lat,
+                "longitude": row.report_lot,
+                "visible": row.visible,
+                "delete_vote": row.delete_vote,
+                "vote_id": row.vote_id,
+            })
+
+        return JSONResponse(content={"count": len(results), "results": results})
+
+    except Exception as e:
+        logging.error(f"사용자 제보 조회 실패: {e}")
+        raise HTTPException(status_code=500, detail="사용자 제보 조회 실패")
 @app.get("/rtd/search")
 def search_rtd(
     rtd_loc: Optional[str] = None,
