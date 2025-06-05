@@ -3,3 +3,9 @@ CREATE TABLE IF NOT EXISTS user_device (
     device_token TEXT,
     registered_at TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS user_device (
+    user_id TEXT PRIMARY KEY,
+    device_token TEXT,
+    registered_at TIMESTAMP
+);
