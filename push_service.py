@@ -359,7 +359,7 @@ def search_rtd(
                 "longitude": getattr(row, 'longitude', None),
             })
 
-        # === 2) 제보 데이터 조회 (visible = True만 포함된 MV 사용) ===
+        # === 2) 제보 데이터 조회 (visible = True인 것만 MV에서 조회) ===
         if rtd_loc:
             report_query = """
                 SELECT * FROM user_report_visible_by_location_time
