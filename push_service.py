@@ -285,7 +285,8 @@ def search_rtd(
     rtd_code: Optional[int] = None,
     from_time: Optional[str] = None,
     to_time: Optional[str] = None,
-    days: Optional[int] = 1
+    days: Optional[int] = 1,
+    sort: Optional[str] = Query("desc", description="정렬 순서: asc 또는 desc")
 ):
     now = datetime.utcnow()
 
@@ -337,7 +338,7 @@ def search_rtd(
             rtd_results.append({
                 "type": "rtd",
                 "id": str(row.id),
-                "rtd_time": row.rtd_time.isoformat() if row.rtd_time else None,
+                "time": row.rtd_time.isoformat() if row.rtd_time else None,
                 "rtd_loc": row.rtd_loc,
                 "rtd_details": row.rtd_details,
                 "rtd_code": row.rtd_code,
@@ -346,7 +347,7 @@ def search_rtd(
                 "longitude": getattr(row, 'longitude', None),
             })
 
-        # === 2) 제보 데이터 조회 (조건 없이 항상 실행) ===
+        # === 2) user_report 테이블 조회 ===
         report_query = """
             SELECT * FROM user_report_by_time
             WHERE report_at >= %s AND report_at <= %s
@@ -355,11 +356,11 @@ def search_rtd(
         report_rows = session.execute(report_query, (start_time, end_time))
 
         for row in report_rows:
-            if getattr(row, 'visible', True):  # visible=True 조건
+            if getattr(row, 'visible', True):
                 report_results.append({
                     "type": "report",
-                    "report_id": str(row.report_id),
-                    "report_time": row.report_at.isoformat() if row.report_at else None,
+                    "id": str(row.report_id),
+                    "time": row.report_at.isoformat() if row.report_at else None,
                     "report_location": row.report_location,
                     "middle_type": row.middle_type,
                     "small_type": row.small_type,
@@ -370,10 +371,18 @@ def search_rtd(
                     "delete_vote": row.delete_vote
                 })
 
+        # === 3) 통합 정렬 ===
+        merged_results = rtd_results + report_results
+
+        sorted_results = sorted(
+            merged_results,
+            key=lambda x: x.get("time"),
+            reverse=(sort != "asc")  # asc일 때만 오름차순, 나머지는 최신순
+        )
+
         return JSONResponse(content={
-            "count": len(rtd_results) + len(report_results),
-            "rtd_results": rtd_results,
-            "report_results": report_results
+            "count": len(sorted_results),
+            "results": sorted_results
         })
 
     except Exception as e:
