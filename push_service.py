@@ -291,20 +291,23 @@ class DeleteReportRequest(BaseModel):
 @app.delete("/report/delete")
 def delete_user_report(data: DeleteReportRequest = Body(...)):
     try:
-        # 1. 해당 report_id가 존재하는지 확인
-        query = "SELECT report_by_id FROM user_report_by_id WHERE report_id = %s"
+        # 1. report_by_id, report_at 조회
+        query = """
+            SELECT report_by_id, report_at FROM user_report 
+            WHERE report_id = %s ALLOW FILTERING
+        """
         result = session.execute(query, (data.report_id,)).one()
 
         if not result:
             raise HTTPException(status_code=404, detail="해당 제보를 찾을 수 없습니다.")
 
-        # 2. 작성자 일치 여부 확인
+        # 2. 작성자 확인
         if result.report_by_id != data.user_id:
             raise HTTPException(status_code=403, detail="해당 제보의 작성자가 아닙니다.")
 
-        # 3. 삭제 (실제 삭제 대신 visible=False 처리할 수도 있음)
-        delete_query = "DELETE FROM user_report_by_id WHERE report_id = %s"
-        session.execute(delete_query, (data.report_id,))
+        # 3. 삭제 (원본 테이블에서)
+        delete_query = "DELETE FROM user_report WHERE report_by_id = %s AND report_at = %s"
+        session.execute(delete_query, (result.report_by_id, result.report_at))
 
         return {"message": "제보가 삭제되었습니다."}
 
