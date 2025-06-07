@@ -121,6 +121,16 @@ def get_user_report_history(
     except Exception as e:
         logging.error(f"사용자 제보 내역 조회 실패: {e}")
         raise HTTPException(status_code=500, detail="사용자 제보 조회 실패")
+
+class UserReportRequest(BaseModel):
+    userId: str
+    disasterType: str
+    disasterTime: Optional[str] = None
+    reportContent: Optional[str] = None
+    disasterPos: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
 @app.post("/userReport")
 def create_user_report(request: UserReportRequest):
     try:
