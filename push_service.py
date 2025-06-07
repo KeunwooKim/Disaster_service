@@ -129,6 +129,21 @@ def get_user_report_history(
     except Exception as e:
         logging.error(f"제보 내역 조회 실패: {e}")
         raise HTTPException(status_code=500, detail="제보 내역 조회 실패")
+SMALL_TYPE_TO_MIDDLE = {
+    "31": ("풍수해", "30"),   # 태풍
+    "32": ("풍수해", "30"),   # 호우
+    "33": ("풍수해", "30"),   # 홍수
+    "34": ("풍수해", "30"),   # 강풍
+    "35": ("풍수해", "30"),   # 대설
+    "41": ("기상재난", "40"), # 폭염
+    "42": ("기상재난", "40"), # 한파
+    "51": ("지질재난", "50"), # 지진
+    "11": ("감염병", "11"),   # 감염병
+    "61": ("화재/폭발", "60"), # 산불
+    "62": ("화재/폭발", "60"), # 일일화재
+    "71": ("미세먼지", "70"), # 미세먼지 시도별
+    "72": ("미세먼지", "70"), # 대기질 예보
+}
 
 class UserReportRequest(BaseModel):
     userId: str
@@ -152,6 +167,13 @@ def create_user_report(request: UserReportRequest):
         report_time = datetime.fromisoformat(request.disasterTime) if request.disasterTime else datetime.utcnow()
         report_id = uuid4()
 
+        small_type = request.disasterType
+
+        if small_type not in SMALL_TYPE_TO_MIDDLE:
+            raise HTTPException(status_code=400, detail=f"알 수 없는 소분류 코드: {small_type}")
+
+        _, middle_type = SMALL_TYPE_TO_MIDDLE[small_type]
+
         insert_query = """
             INSERT INTO user_report (
                 report_by_id, report_at, report_id, middle_type, small_type,
@@ -165,8 +187,8 @@ def create_user_report(request: UserReportRequest):
             request.userId,
             report_time,
             report_id,
-            request.disasterType,
-            request.disasterType,
+            middle_type,
+            small_type,
             request.disasterPos,
             request.reportContent,
             request.latitude,
