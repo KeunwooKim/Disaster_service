@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from uuid import uuid4
 from fastapi import Query
+from fastapi import Body
 
 # 환경 변수 로드 (.env 파일 활용)
 load_dotenv()
@@ -129,6 +130,7 @@ def get_user_report_history(
     except Exception as e:
         logging.error(f"제보 내역 조회 실패: {e}")
         raise HTTPException(status_code=500, detail="제보 내역 조회 실패")
+
 SMALL_TYPE_TO_MIDDLE = {
     "31": ("풍수해", "30"),   # 태풍
     "32": ("풍수해", "30"),   # 호우
@@ -287,7 +289,7 @@ class DeleteReportRequest(BaseModel):
     user_id: str
 
 @app.delete("/report/delete")
-def delete_user_report(data: DeleteReportRequest):
+def delete_user_report(data: DeleteReportRequest = Body(...)):
     try:
         # 1. 해당 report_id가 존재하는지 확인
         query = "SELECT report_by_id FROM user_report_by_id WHERE report_id = %s"
@@ -309,7 +311,6 @@ def delete_user_report(data: DeleteReportRequest):
     except Exception as e:
         logging.error(f"제보 삭제 실패: {e}")
         raise HTTPException(status_code=500, detail="제보 삭제 실패")
-
 @app.get("/rtd/search")
 def search_rtd(
     rtd_loc: Optional[str] = None,
