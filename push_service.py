@@ -132,7 +132,8 @@ def get_user_report_history(
 
 class UserReportRequest(BaseModel):
     userId: str
-    disasterType: str
+    middleType: str             # 중분류
+    smallType: Optional[str] = None  # 소분류 (선택)
     disasterTime: Optional[str] = None
     reportContent: Optional[str] = None
     disasterPos: Optional[str] = None
@@ -154,8 +155,9 @@ def create_user_report(request: UserReportRequest):
 
         insert_query = """
             INSERT INTO user_report (
-                report_by_id, report_at, report_id, middle_type, small_type,
-                report_location, report_content, report_lat, report_lot,
+                report_by_id, report_at, report_id,
+                middle_type, small_type, report_location,
+                report_content, report_lat, report_lot,
                 visible, delete_vote, vote_id
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, true, 0, [])
@@ -165,8 +167,8 @@ def create_user_report(request: UserReportRequest):
             request.userId,
             report_time,
             report_id,
-            request.disasterType,
-            request.disasterType,
+            request.middleType,
+            request.smallType,
             request.disasterPos,
             request.reportContent,
             request.latitude,
@@ -180,10 +182,6 @@ def create_user_report(request: UserReportRequest):
     except Exception as e:
         logging.error(f"제보 저장 실패: {e}")
         raise HTTPException(status_code=500, detail="제보 저장 실패")
-
-class VoteByIDRequest(BaseModel):
-    report_id: UUID
-    user_id: str
 
 @app.post("/report/vote_by_id")
 def vote_to_delete_by_report_id(data: VoteByIDRequest):
