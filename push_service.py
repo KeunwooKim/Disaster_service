@@ -140,6 +140,7 @@ class UserReportRequest(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
 
+
 @app.post("/userReport")
 def create_user_report(request: UserReportRequest):
     try:
@@ -182,6 +183,10 @@ def create_user_report(request: UserReportRequest):
     except Exception as e:
         logging.error(f"제보 저장 실패: {e}")
         raise HTTPException(status_code=500, detail="제보 저장 실패")
+
+class VoteByIDRequest(BaseModel):
+    report_id: UUID
+    user_id: str
 
 @app.post("/report/vote_by_id")
 def vote_to_delete_by_report_id(data: VoteByIDRequest):
