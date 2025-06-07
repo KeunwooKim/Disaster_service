@@ -76,7 +76,7 @@ def get_test_events():
 
 @app.get("/userReport/history")
 def get_user_report_history(
-    userId: str = Query(..., description="제보자 ID"),
+    userId: Optional[str] = Query(None, description="제보자 ID (없으면 전체 조회)"),
     from_time: Optional[str] = None,
     to_time: Optional[str] = None,
     days: Optional[int] = 7
@@ -94,12 +94,20 @@ def get_user_report_history(
         raise HTTPException(status_code=400, detail="시간 형식이 잘못되었습니다 (ISO 8601)")
 
     try:
-        query = """
-            SELECT * FROM user_report_by_user_time
-            WHERE report_by_id = %s AND report_at >= %s AND report_at <= %s
-            ALLOW FILTERING
-        """
-        rows = session.execute(query, (userId, start_time, end_time))
+        if userId:
+            query = """
+                SELECT * FROM user_report_by_user_time
+                WHERE report_by_id = %s AND report_at >= %s AND report_at <= %s
+                ALLOW FILTERING
+            """
+            rows = session.execute(query, (userId, start_time, end_time))
+        else:
+            query = """
+                SELECT * FROM user_report_by_time
+                WHERE report_at >= %s AND report_at <= %s
+                ALLOW FILTERING
+            """
+            rows = session.execute(query, (start_time, end_time))
 
         reports = []
         for row in rows:
@@ -119,8 +127,8 @@ def get_user_report_history(
         return JSONResponse(content={"count": len(reports), "results": reports})
 
     except Exception as e:
-        logging.error(f"사용자 제보 내역 조회 실패: {e}")
-        raise HTTPException(status_code=500, detail="사용자 제보 조회 실패")
+        logging.error(f"제보 내역 조회 실패: {e}")
+        raise HTTPException(status_code=500, detail="제보 내역 조회 실패")
 
 class UserReportRequest(BaseModel):
     userId: str
