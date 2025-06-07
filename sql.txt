@@ -4,4 +4,4 @@ SELECT report_id, report_by_id, report_at, middle_type, small_type,
        visible, delete_vote, vote_id
 FROM user_report
 WHERE report_id IS NOT NULL AND report_by_id IS NOT NULL AND report_at IS NOT NULL
-PRIMARY KEY (report_id);
+PRIMARY KEY (report_id, report_by_id, report_at);
