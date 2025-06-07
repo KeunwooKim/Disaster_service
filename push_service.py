@@ -132,14 +132,12 @@ def get_user_report_history(
 
 class UserReportRequest(BaseModel):
     userId: str
-    middleType: str             # 중분류
-    smallType: Optional[str] = None  # 소분류 (선택)
+    disasterType: str
     disasterTime: Optional[str] = None
     reportContent: Optional[str] = None
     disasterPos: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
-
 
 @app.post("/userReport")
 def create_user_report(request: UserReportRequest):
@@ -156,9 +154,8 @@ def create_user_report(request: UserReportRequest):
 
         insert_query = """
             INSERT INTO user_report (
-                report_by_id, report_at, report_id,
-                middle_type, small_type, report_location,
-                report_content, report_lat, report_lot,
+                report_by_id, report_at, report_id, middle_type, small_type,
+                report_location, report_content, report_lat, report_lot,
                 visible, delete_vote, vote_id
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, true, 0, [])
@@ -168,8 +165,8 @@ def create_user_report(request: UserReportRequest):
             request.userId,
             report_time,
             report_id,
-            request.middleType,
-            request.smallType,
+            request.disasterType,
+            request.disasterType,
             request.disasterPos,
             request.reportContent,
             request.latitude,
