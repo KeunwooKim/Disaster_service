@@ -122,24 +122,16 @@ def get_user_report_history(
         logging.error(f"사용자 제보 내역 조회 실패: {e}")
         raise HTTPException(status_code=500, detail="사용자 제보 조회 실패")
 @app.post("/userReport")
-def create_user_report(
-    userId: str,
-    disasterType: str,
-    disasterTime: Optional[str] = None,
-    reportContent: Optional[str] = None,
-    disasterPos: Optional[str] = None,
-    latitude: Optional[float] = None,
-    longitude: Optional[float] = None
-):
+def create_user_report(request: UserReportRequest):
     try:
         # 사용자 존재 여부 확인
         check_query = "SELECT user_id FROM user_device WHERE user_id = %s"
-        result = session.execute(check_query, (userId,)).one()
+        result = session.execute(check_query, (request.userId,)).one()
 
         if result is None:
             raise HTTPException(status_code=404, detail="사용자 정보가 존재하지 않습니다.")
 
-        report_time = datetime.fromisoformat(disasterTime) if disasterTime else datetime.utcnow()
+        report_time = datetime.fromisoformat(request.disasterTime) if request.disasterTime else datetime.utcnow()
         report_id = uuid4()
 
         insert_query = """
@@ -152,15 +144,15 @@ def create_user_report(
         """
 
         session.execute(insert_query, (
-            userId,
+            request.userId,
             report_time,
             report_id,
-            disasterType,
-            disasterType,
-            disasterPos,
-            reportContent,
-            latitude,
-            longitude
+            request.disasterType,
+            request.disasterType,
+            request.disasterPos,
+            request.reportContent,
+            request.latitude,
+            request.longitude
         ))
 
         return {"message": "제보가 성공적으로 저장되었습니다.", "report_id": str(report_id)}
