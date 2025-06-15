@@ -3,7 +3,7 @@ import torch
 from transformers import BertTokenizerFast, BertForTokenClassification
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 모델 로드
+# 1) 모델 로드
 BASE_DIR = os.path.dirname(__file__)
 MODEL_PATH = os.path.join(BASE_DIR, "ner_model")
 
@@ -18,74 +18,55 @@ model_loc.eval()
 # ──────────────────────────────────────────────────────────────────────────────
 def extract_locations(text: str) -> list:
     """
-    B-LOC/I-LOC로 예측된 서브워드를 단어 단위로 결합해, 연속된 지명 단어를 스팬 문자열로 반환합니다.
+    B-LOC/I-LOC로 예측된 단어 단위 지명을 연속 스팬으로 반환합니다.
     """
     if not text:
         return []
-    # 토큰화: word level 인덱스 포함
+    # 단어 단위로 간단 분할
+    words = text.split()
     encoding = tokenizer_loc(
-        text,
-        return_offsets_mapping=True,
+        words,
+        is_split_into_words=True,
         return_tensors="pt",
         truncation=True,
-        max_length=512,
-        is_split_into_words=True
+        max_length=512
     )
     input_ids = encoding["input_ids"].to(device)
     attention_mask = encoding["attention_mask"].to(device)
     word_ids = encoding.word_ids()
-    tokens = tokenizer_loc.convert_ids_to_tokens(input_ids[0])
 
-    # 모델 예측
+    # 예측
     with torch.no_grad():
         logits = model_loc(input_ids=input_ids, attention_mask=attention_mask).logits[0]
     preds = torch.argmax(logits, dim=-1).tolist()
 
-    # word_id 단위로 subword 결합 및 word-level LOC 판정
-    word_texts = []
-    word_is_loc = []
-    current_id = None
-    pieces = []
-    labels = []
-    for tok, pid, wid in zip(tokens, preds, word_ids):
-        if wid is None:
-            continue
-        label = model_loc.config.id2label[pid]
-        if wid != current_id:
-            if current_id is not None:
-                # finalize previous word
-                word = ''.join([p[2:] if p.startswith('##') else p for p in pieces])
-                is_loc = any(l in ('B-LOC','I-LOC') for l in labels)
-                word_texts.append(word)
-                word_is_loc.append(is_loc)
-            # reset for new word
-            current_id = wid
-            pieces = [tok]
-            labels = [label]
-        else:
-            pieces.append(tok)
-            labels.append(label)
-    # 마지막 단어 처리
-    if current_id is not None:
-        word = ''.join([p[2:] if p.startswith('##') else p for p in pieces])
-        is_loc = any(l in ('B-LOC','I-LOC') for l in labels)
-        word_texts.append(word)
-        word_is_loc.append(is_loc)
-
-    # 연속 LOC 단어를 묶어 스팬 생성
-    spans = []
+    # word_id 단위 LOC 판단
+    span_list = []
     current_span = []
-    for word, is_loc in zip(word_texts, word_is_loc):
-        if is_loc:
-            current_span.append(word)
+    prev_wid = None
+    for idx, wid in enumerate(word_ids):
+        if wid is None:
+            label = "O"
         else:
+            label = model_loc.config.id2label[preds[idx]]
+        if wid is not None and label in ("B-LOC", "I-LOC"):
+            # LOC 단어
+            if wid != prev_wid:
+                # 새로운 단어
+                current_span.append(words[wid])
+            else:
+                # 같은 단어 id: 추가하지 않음
+                pass
+        else:
+            # LOC 종료
             if current_span:
-                spans.append(' '.join(current_span))
+                span_list.append(" ".join(current_span))
                 current_span = []
+        prev_wid = wid
+    # 마지막 span
     if current_span:
-        spans.append(' '.join(current_span))
-
-    return spans
+        span_list.append(" ".join(current_span))
+    return span_list
 
 
 def extract_location_tokens(text: str) -> list:
@@ -127,7 +108,7 @@ if __name__ == "__main__":
     ]
     for sent in examples:
         print(f"문장: {sent}")
-        print(f"전처리된 단어: {tokenizer_loc.convert_ids_to_tokens(tokenizer_loc(sent, return_tensors='pt', truncation=True, max_length=512)['input_ids'][0])}")
+        print(f"원문 단어 분할: {sent.split()}")
         print(f"토큰-라벨: {debug_token_labels(sent)}")
         print(f"추출된 스팬: {extract_locations(sent)}")
         print(f"추출된 토큰: {extract_location_tokens(sent)}")
@@ -137,7 +118,7 @@ if __name__ == "__main__":
         text = input("문장 입력> ").strip()
         if not text:
             break
-        print(f"단어 단위: {tokenizer_loc.convert_ids_to_tokens(tokenizer_loc(text, return_tensors='pt', truncation=True, max_length=512)['input_ids'][0])}")
+        print(f"단어 분할: {text.split()}")
         print(f"토큰-라벨: {debug_token_labels(text)}")
         print(f"스팬: {extract_locations(text)}")
         print(f"토큰: {extract_location_tokens(text)}\n")
