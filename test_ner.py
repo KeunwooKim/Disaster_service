@@ -3,7 +3,7 @@ import torch
 from transformers import BertTokenizerFast, BertForTokenClassification
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 1) 모델 로드
+# 모델 로드
 BASE_DIR = os.path.dirname(__file__)
 MODEL_PATH = os.path.join(BASE_DIR, "ner_model")
 
@@ -18,32 +18,29 @@ model_loc.eval()
 # ──────────────────────────────────────────────────────────────────────────────
 def extract_locations(text: str) -> list:
     """
-    전체 텍스트에서 B-LOC/I-LOC로 인식된 스팬(문자열)을 반환합니다.
+    전체 텍스트에서 B-LOC/I-LOC로 인식된 스팬(문자열) 목록을 반환합니다.
+    특수 토큰(offset span이 0인 토큰)은 건너뛰고, 길이 2자 이상인 중복 없는 스팬만 출력합니다.
     """
     if not text:
         return []
-
-    encoding = tokenizer_loc(
-        text,
-        return_offsets_mapping=True,
-        truncation=True,
-        max_length=512,
-        return_tensors="pt"
-    )
+    encoding = tokenizer_loc(text, return_offsets_mapping=True,
+                              truncation=True, max_length=512,
+                              return_tensors="pt")
     input_ids = encoding["input_ids"].to(device)
     attention_mask = encoding["attention_mask"].to(device)
     offsets = encoding["offset_mapping"][0].tolist()
 
     with torch.no_grad():
-        logits = model_loc(input_ids, attention_mask=attention_mask).logits[0]
+        logits = model_loc(input_ids=input_ids,
+                           attention_mask=attention_mask).logits[0]
     preds = torch.argmax(logits, dim=-1).tolist()
 
     spans = []
     current = None
-    for idx, (label_id, (start, end)) in enumerate(zip(preds, offsets)):
+    for (pid, (start, end)) in zip(preds, offsets):
         if start == end:
             continue
-        label = model_loc.config.id2label[label_id]
+        label = model_loc.config.id2label[pid]
         if label == "B-LOC":
             if current:
                 spans.append(tuple(current))
@@ -67,29 +64,37 @@ def extract_locations(text: str) -> list:
 
 def extract_location_tokens(text: str) -> list:
     """
-    입력 문장을 토큰 단위로 분해한 후, B-LOC/I-LOC로 라벨된 모든 토큰을 반환합니다.
+    입력 텍스트를 토큰화하여, B-LOC/I-LOC로 예측된 모든 토큰(subword)을 반환합니다.
     """
     if not text:
         return []
-    encoding = tokenizer_loc(
-        text,
-        return_tensors="pt",
-        truncation=True,
-        max_length=512
-    )
-    input_ids = encoding["input_ids"][0]
+    enc = tokenizer_loc(text, return_tensors="pt",
+                        truncation=True, max_length=512)
+    input_ids = enc["input_ids"][0]
     tokens = tokenizer_loc.convert_ids_to_tokens(input_ids)
-    encoding = {k: v.to(device) for k, v in encoding.items()}
+    enc = {k: v.to(device) for k, v in enc.items()}
     with torch.no_grad():
-        logits = model_loc(**encoding).logits[0]
+        logits = model_loc(**enc).logits[0]
     preds = torch.argmax(logits, dim=-1).tolist()
 
-    loc_tokens = []
-    for tok, pid in zip(tokens, preds):
-        label = model_loc.config.id2label.get(pid, "O")
-        if label in {"B-LOC", "I-LOC"}:
-            loc_tokens.append(tok)
+    loc_tokens = [tok for tok, pid in zip(tokens, preds)
+                  if model_loc.config.id2label[pid] in {"B-LOC", "I-LOC"}]
     return loc_tokens
+
+
+def debug_token_labels(text: str) -> list:
+    """
+    입력 텍스트의 모든 토큰과 모델이 예측한 라벨을 (token, label) 튜플로 반환합니다.
+    """
+    enc = tokenizer_loc(text, return_tensors="pt",
+                        truncation=True, max_length=512)
+    input_ids = enc["input_ids"][0]
+    tokens = tokenizer_loc.convert_ids_to_tokens(input_ids)
+    enc = {k: v.to(device) for k, v in enc.items()}
+    with torch.no_grad():
+        logits = model_loc(**enc).logits[0]
+    preds = torch.argmax(logits, dim=-1).tolist()
+    return [(tok, model_loc.config.id2label[pid]) for tok, pid in zip(tokens, preds)]
 
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
@@ -102,6 +107,12 @@ if __name__ == "__main__":
 
     for sent in samples:
         print(f"문장: {sent}")
+        print("전체 토큰:",
+              tokenizer_loc.convert_ids_to_tokens(
+                  tokenizer_loc(sent, return_tensors="pt",
+                                truncation=True, max_length=512)["input_ids"][0]
+              ))
+        print("토큰-라벨:", debug_token_labels(sent))
         print(f"추출된 스팬: {extract_locations(sent)}")
         print(f"추출된 토큰: {extract_location_tokens(sent)}")
         print("─" * 40)
@@ -111,5 +122,11 @@ if __name__ == "__main__":
         text = input("문장 입력> ").strip()
         if not text:
             break
-        print(f"스팬: {extract_locations(text)}")
-        print(f"토큰: {extract_location_tokens(text)}\n")
+        print("전체 토큰:",
+              tokenizer_loc.convert_ids_to_tokens(
+                  tokenizer_loc(text, return_tensors="pt",
+                                truncation=True, max_length=512)["input_ids"][0]
+              ))
+        print("토큰-라벨:", debug_token_labels(text))
+        print("스팬:", extract_locations(text))
+        print("토큰:", extract_location_tokens(text), "\n")
