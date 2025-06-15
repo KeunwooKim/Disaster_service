@@ -3,26 +3,26 @@ import torch
 from transformers import BertTokenizerFast, BertForTokenClassification
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 1) 모델 로드
+# 모델 로드
 BASE_DIR = os.path.dirname(__file__)
 MODEL_PATH = os.path.join(BASE_DIR, "ner_model")
 
 tokenizer_loc = BertTokenizerFast.from_pretrained(MODEL_PATH)
 model_loc = BertForTokenClassification.from_pretrained(MODEL_PATH)
-model_loc.config.id2label = {0: "O", 1: "B-ORG", 2: "B-LOC", 3: "I-LOC", 4: "I-ORG"}
+model_loc.config.id2label = {0: "O", 1: "B-LOC", 2: "I-LOC"}
 model_loc.config.label2id = {v: k for k, v in model_loc.config.id2label.items()}
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model_loc.to(device)
 model_loc.eval()
 
 # ──────────────────────────────────────────────────────────────────────────────
+
 def extract_locations(text: str) -> list:
     """
-    B-LOC/I-LOC로 예측된 단어 단위 지명을 연속 스팬으로 반환합니다.
+    B-LOC/I-LOC로 예측된 단어 단위 지명 스팬을 반환합니다.
     """
     if not text:
         return []
-    # 단어 단위로 간단 분할
     words = text.split()
     encoding = tokenizer_loc(
         words,
@@ -35,38 +35,29 @@ def extract_locations(text: str) -> list:
     attention_mask = encoding["attention_mask"].to(device)
     word_ids = encoding.word_ids()
 
-    # 예측
     with torch.no_grad():
         logits = model_loc(input_ids=input_ids, attention_mask=attention_mask).logits[0]
     preds = torch.argmax(logits, dim=-1).tolist()
 
-    # word_id 단위 LOC 판단
-    span_list = []
-    current_span = []
+    spans = []
+    current = []
     prev_wid = None
     for idx, wid in enumerate(word_ids):
         if wid is None:
             label = "O"
         else:
             label = model_loc.config.id2label[preds[idx]]
-        if wid is not None and label in ("B-LOC", "I-LOC"):
-            # LOC 단어
+        if wid is not None and label in ("B-LOC","I-LOC"):
             if wid != prev_wid:
-                # 새로운 단어
-                current_span.append(words[wid])
-            else:
-                # 같은 단어 id: 추가하지 않음
-                pass
+                current.append(words[wid])
         else:
-            # LOC 종료
-            if current_span:
-                span_list.append(" ".join(current_span))
-                current_span = []
+            if current:
+                spans.append(" ".join(current))
+                current = []
         prev_wid = wid
-    # 마지막 span
-    if current_span:
-        span_list.append(" ".join(current_span))
-    return span_list
+    if current:
+        spans.append(" ".join(current))
+    return spans
 
 
 def extract_location_tokens(text: str) -> list:
@@ -82,12 +73,13 @@ def extract_location_tokens(text: str) -> list:
     with torch.no_grad():
         logits = model_loc(**enc).logits[0]
     preds = torch.argmax(logits, dim=-1).tolist()
-    return [tok for tok, pid in zip(tokens, preds) if model_loc.config.id2label[pid] in ('B-LOC','I-LOC')]
+    return [tok for tok, pid in zip(tokens, preds)
+            if model_loc.config.id2label[pid] in ('B-LOC','I-LOC')]
 
 
 def debug_token_labels(text: str) -> list:
     """
-    모든 토큰과 예측 라벨을 튜플로 반환합니다.
+    모든 토큰과 예측 라벨 튜플을 반환합니다.
     """
     enc = tokenizer_loc(text, return_tensors="pt", truncation=True, max_length=512)
     input_ids = enc["input_ids"][0]
@@ -108,11 +100,12 @@ if __name__ == "__main__":
     ]
     for sent in examples:
         print(f"문장: {sent}")
-        print(f"원문 단어 분할: {sent.split()}")
+        print(f"단어 분할: {sent.split()}")
         print(f"토큰-라벨: {debug_token_labels(sent)}")
         print(f"추출된 스팬: {extract_locations(sent)}")
         print(f"추출된 토큰: {extract_location_tokens(sent)}")
         print("─" * 40)
+
     print("🔍 직접 입력 테스트 (종료하려면 빈 줄 입력)")
     while True:
         text = input("문장 입력> ").strip()
