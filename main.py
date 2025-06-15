@@ -1094,9 +1094,9 @@ class DisasterMessageCrawler:
                         except Exception as e:
                             logging.error(f"❌ RTD 저장 실패 (지역: {rtd_loc}): {e}")
                 else:
-                    # 추출 실패 시 issued_at을 지역으로 사용
-                    fallback_loc = msg['issued_at']
-                    logging.warning(f"⚠️ 지역명 미추출 → issued_at을 지역명으로 사용: {fallback_loc}")
+                    # 추출 실패 시 issuing_agency을 지역으로 사용
+                    fallback_loc = msg['issuing_agency']
+                    logging.warning(f"⚠️ 지역명 미추출 → issuing_agency을 지역명으로 사용: {fallback_loc}")
 
                     rtd_details = [
                         f"level: {msg['emergency_level']}",
@@ -1106,7 +1106,7 @@ class DisasterMessageCrawler:
 
                     insert_rtd_data(
                         21,
-                        msg['issued_at'],
+                        msg['issuing_agency'],
                         fallback_loc,
                         rtd_details,
                         None,  # 지역코드 없음
