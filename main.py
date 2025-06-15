@@ -1114,6 +1114,10 @@ class DisasterMessageCrawler:
                         None  # 경도
                     )
                     logging.info(f"✅ rtd_db({fallback_loc}) 저장 완료 (추출 실패)")
+            except Exception as e:
+                logging.error(f"❌ backup_messages 처리 중 오류: {e}")
+            # 이렇게 except를 달아야 그 다음에 나오는 def check_and_save 가 정상적으로 파싱됩니다.
+
 
     def check_and_save(self):
         messages = self.check_messages()
