@@ -18,9 +18,13 @@ model_loc.eval()
 def extract_locations(text: str) -> list:
     """
     입력 텍스트에서 B-LOC/I-LOC로 예측된 단어 단위 지명을 스팬으로 추출하여 리스트로 반환합니다.
+    불용어(stopwords)에 해당하는 단어가 포함된 스팬은 제외합니다.
     """
+    STOPWORDS = {"미리", "관리"}
+
     if not text:
         return []
+
     words = text.split()
     encoding = tokenizer_loc(
         words,
@@ -40,21 +44,27 @@ def extract_locations(text: str) -> list:
     spans = []
     current = []
     prev_wid = None
+
     for idx, wid in enumerate(word_ids):
-        if wid is None:
-            label = "O"
-        else:
-            label = model_loc.config.id2label[preds[idx]]
+        label = "O" if wid is None else model_loc.config.id2label[preds[idx]]
         if wid is not None and label in ("B-LOC", "I-LOC"):
             if wid != prev_wid:
                 current.append(words[wid])
         else:
             if current:
-                spans.append(" ".join(current))
+                span = " ".join(current)
+                # 불용어 포함 시 제외
+                if not any(sw in span for sw in STOPWORDS):
+                    spans.append(span)
                 current = []
         prev_wid = wid
+
+    # 마지막 스팬 처리
     if current:
-        spans.append(" ".join(current))
+        span = " ".join(current)
+        if not any(sw in span for sw in STOPWORDS):
+            spans.append(span)
+
     return spans
 
 
