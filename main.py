@@ -1062,61 +1062,59 @@ class DisasterMessageCrawler:
                 extracted_regions = extract_locations(full_text)
                 logging.info(f"🔍 추출된 지역들: {extracted_regions}")
 
-                # 지역명 추출 성공 시 → 여러 지역에 대해 반복 저장
                 if extracted_regions:
+                    # → (생략) 정상적인 지역별 RTD 저장 로직
                     for rtd_loc in extracted_regions:
-                        try:
-                            region_cd = get_regioncode(rtd_loc)
-                            logging.info(f"🏷 행정구역 코드: {region_cd}")
+                        region_cd = get_regioncode(rtd_loc)
+                        coords    = geocoding(rtd_loc)
+                        lat       = float(coords.get('lat')) if coords.get('lat') else None
+                        lng       = float(coords.get('lng')) if coords.get('lng') else None
 
-                            coords = geocoding(rtd_loc)
-                            lat = float(coords['lat']) if coords.get('lat') else None
-                            lng = float(coords['lng']) if coords.get('lng') else None
-                            logging.info(f"📍 위도·경도: ({lat}, {lng})")
+                        rtd_details = [
+                            f"level: {msg['emergency_level']}",
+                            f"type: {msg['DM_ntype']}",
+                            f"content: {msg['message_content']}"
+                        ]
+                        insert_rtd_data(
+                            21,
+                            msg['issued_at'],
+                            rtd_loc,
+                            rtd_details,
+                            region_cd,
+                            lat,
+                            lng
+                        )
+                        logging.info(f"✅ rtd_db 저장 완료 (loc: {rtd_loc})")
 
-                            rtd_time = msg['issued_at']
-                            rtd_details = [
-                                f"level: {msg['emergency_level']}",
-                                f"type: {msg['DM_ntype']}",
-                                f"content: {msg['message_content']}"
-                            ]
-
-                            insert_rtd_data(
-                                21,
-                                rtd_time,
-                                rtd_loc,
-                                rtd_details,
-                                region_cd,
-                                lat,
-                                lng
-                            )
-                            logging.info(f"✅ rtd_db({rtd_loc}, code={region_cd}) 저장 완료")
-                        except Exception as e:
-                            logging.error(f"❌ RTD 저장 실패 (지역: {rtd_loc}): {e}")
                 else:
-                    # 추출 실패 시 issuing_agency을 지역으로 사용
+                    # 추출 실패 시 issuing_agency 를 지역명으로 사용
                     fallback_loc = msg['issuing_agency']
-                    logging.warning(f"⚠️ 지역명 미추출 → issuing_agency을 지역명으로 사용: {fallback_loc}")
+                    logging.warning(f"⚠️ 지역명 미추출 → issuing_agency 를 지역명으로 사용: {fallback_loc}")
+
+                    # issuing_agency 에 대해 geocode & regioncode 수행
+                    region_cd = get_regioncode(fallback_loc)
+                    coords    = geocoding(fallback_loc)
+                    lat       = float(coords.get('lat')) if coords.get('lat') else None
+                    lng       = float(coords.get('lng')) if coords.get('lng') else None
 
                     rtd_details = [
                         f"level: {msg['emergency_level']}",
                         f"type: {msg['DM_ntype']}",
                         f"content: {msg['message_content']}"
                     ]
-
                     insert_rtd_data(
                         21,
-                        msg['issuing_agency'],
+                        msg['issued_at'],
                         fallback_loc,
                         rtd_details,
-                        None,  # 지역코드 없음
-                        None,  # 위도
-                        None  # 경도
+                        region_cd,
+                        lat,
+                        lng
                     )
-                    logging.info(f"✅ rtd_db({fallback_loc}) 저장 완료 (추출 실패)")
+                    logging.info(f"✅ rtd_db 저장 완료 (fallback loc: {fallback_loc})")
+
             except Exception as e:
                 logging.error(f"❌ backup_messages 처리 중 오류: {e}")
-            # 이렇게 except를 달아야 그 다음에 나오는 def check_and_save 가 정상적으로 파싱됩니다.
 
 
     def check_and_save(self):
