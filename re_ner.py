@@ -66,12 +66,15 @@ for row in rows:
             update_q,
             (combined_loc, region_cd, lat, lon, rtd_time, record_id)
         )
-        logging.info(f"[{record_id}] 업데이트 완료: {combined_loc}")
         count += 1
+        logging.info(f"[{record_id}] 업데이트 완료: {combined_loc}")
+        print(f"[{record_id}] 저장 완료: {combined_loc}")  # ← 추가된 출력문
     except Exception as e:
         logging.error(f"[{record_id}] 업데이트 오류: {e}")
 
+# 최종 업데이트 개수 출력
 logging.info(f"총 {count}건 업데이트 완료.")
+print(f"총 {count}건 업데이트 완료.")  # ← 추가된 출력문
 
 session.shutdown()
 cluster.shutdown()
