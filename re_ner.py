@@ -3,7 +3,8 @@ from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import Cluster
 from cassandra.query import SimpleStatement
 from ner_utils import extracted_regions
-from main import geocoding, get_regioncode  # 실제 모듈 경로로 조정하세요
+from main import geocoding, get_regioncode          # geocoding으로 통일
+from address_utils import extract_best_address      # 앞서 만든 상세 주소 뽑기 함수
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
@@ -21,7 +22,6 @@ select_q = SimpleStatement(
 rows = session.execute(select_q)
 
 # UPDATE 문 준비
-# 1) 지명 있을 때: rtd_loc 포함 모두 업데이트
 update_full = session.prepare("""
     UPDATE rtd_db
        SET rtd_loc    = ?,
@@ -31,7 +31,6 @@ update_full = session.prepare("""
      WHERE rtd_time   = ?
        AND id         = ?
 """)
-# 2) 지명 없을 때: regioncode, latitude, longitude만 None 으로 덮어쓰기
 update_null = session.prepare("""
     UPDATE rtd_db
        SET regioncode = ?,
@@ -45,44 +44,56 @@ count = 0
 for row in rows:
     record_id = row.id
     rtd_time  = row.rtd_time
-    # details 에서 content 추출
+
+    # details에서 content 추출
     content = next((d.split("content:",1)[1].strip()
                     for d in row.rtd_details
                     if d.startswith("content:")),
                    None)
-
     if not content:
-        logging.warning(f"[{record_id}] content 누락, regioncode 등만 None으로 업데이트")
-        # content 자체가 없어도, 지명 칼럼들만 None 처리
+        logging.warning(f"[{record_id}] content 누락 → 좌표만 None 업데이트")
         session.execute(update_null, (None, None, None, rtd_time, record_id))
         count += 1
         continue
 
-    regions = extracted_regions(content)
-    if regions:
-        # 지명 추출 성공
-        combined_loc = ", ".join(regions)
-        primary_loc  = regions[0]
-
-        # 위경도 / 행정코드 조회
-        geo = geocoding(primary_loc)
+    # 1) 가장 세부 주소 시도
+    best_addr = extract_best_address(content)
+    if best_addr:
+        # geocoding & regioncode 모두 main 모듈의 함수로!
+        geo = geocoding(best_addr)
         lat = float(geo.get("lat")) if geo.get("lat") else None
         lon = float(geo.get("lng")) if geo.get("lng") else None
-        region_cd = get_regioncode(primary_loc)
+        region_cd = get_regioncode(best_addr)
+        rtd_loc = best_addr
 
-        # 모든 칼럼 업데이트
         session.execute(
             update_full,
-            (combined_loc, region_cd, lat, lon, rtd_time, record_id)
+            (rtd_loc, region_cd, lat, lon, rtd_time, record_id)
         )
-        logging.info(f"[{record_id}] 업데이트 완료: {combined_loc}")
+        logging.info(f"[{record_id}] 상세주소로 업데이트: {rtd_loc}")
+
     else:
-        # 지명 미추출 → regioncode, 위경도만 None
-        logging.warning(f"[{record_id}] 지명 미추출, regioncode 등만 None으로 업데이트")
-        session.execute(
-            update_null,
-            (None, None, None, rtd_time, record_id)
-        )
+        # 2) fallback: 기존 extracted_regions
+        regions = extracted_regions(content)
+        if regions:
+            primary_loc = regions[0]
+            geo = geocoding(primary_loc)
+            lat = float(geo.get("lat")) if geo.get("lat") else None
+            lon = float(geo.get("lng")) if geo.get("lng") else None
+            region_cd = get_regioncode(primary_loc)
+
+            session.execute(
+                update_full,
+                (primary_loc, region_cd, lat, lon, rtd_time, record_id)
+            )
+            logging.info(f"[{record_id}] fallback 업데이트: {primary_loc}")
+        else:
+            # 3) 지명 전혀 없으면 3개만 None
+            logging.warning(f"[{record_id}] 지명 미추출 → 좌표만 None 업데이트")
+            session.execute(
+                update_null,
+                (None, None, None, rtd_time, record_id)
+            )
 
     count += 1
 
