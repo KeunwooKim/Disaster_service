@@ -3,7 +3,7 @@ from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import Cluster
 from cassandra.query import SimpleStatement
 from ner_utils import extract_locations
-from disaster_service.main import geocoding, get_regioncode  # 실제 경로로
+from main import geocoding, get_regioncode  # 실제 경로로
 
 logging.basicConfig(level=logging.INFO)
 
