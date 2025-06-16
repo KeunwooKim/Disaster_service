@@ -443,18 +443,32 @@ def get_air_inform():
         "pageNo": "1",
         "serviceKey": API_KEY
     }
+
     try:
         resp = session_http.get(
             "http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth",
             params=params, timeout=10
         )
         resp.raise_for_status()
+        parsed = xmltodict.parse(resp.text)
     except Exception as e:
-        logging.error(f"Air Inform API 오류: {e}")
+        logging.error(f"Air Inform API 오류 또는 파싱 실패: {e}")
         return
 
-    data = xmltodict.parse(resp.text)
-    items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
+    # 안전하게 딕셔너리 꺼내기
+    response = parsed.get("response")
+    if not response:
+        logging.error("Air Inform API 응답에 <response> 요소가 없습니다.")
+        return
+
+    body = response.get("body", {})
+    items_container = body.get("items", {})
+    items = items_container.get("item", [])
+
+    if items is None:
+        logging.info("대기질 예보 데이터가 없습니다.")
+        return
+
     if not isinstance(items, list):
         items = [items]
 
