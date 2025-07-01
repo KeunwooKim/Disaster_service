@@ -1119,6 +1119,54 @@ class DisasterMessageCrawler:
             except Exception as e:
                 logging.error(f"❌ backup_messages 처리 중 오류: {e}")
 
+    # ---------------------------------------------------------------------------
+    # RTD DB 항목 수정 로직 추가
+    # ---------------------------------------------------------------------------
+    def edit_rtd_entry(self):
+        from cassandra.query import SimpleStatement
+        import uuid
+
+        # 1) 수정할 ID 입력
+        id_input = input("수정할 RTD ID를 입력하세요: ").strip()
+        try:
+            id_uuid = uuid.UUID(id_input)
+        except ValueError:
+            print("유효한 UUID 형식이 아닙니다.")
+            return
+
+        # 2) 현재 값 조회 및 출력
+        stmt = SimpleStatement("SELECT * FROM rtd_db WHERE id = %s ALLOW FILTERING")
+        row = self.session.execute(stmt, (id_uuid,)).one()
+        if not row:
+            print("해당 ID를 찾을 수 없습니다.")
+            return
+        print("현재 값:", row)
+
+        # 3) 수정할 컬럼 입력
+        cols_str = input("수정할 컬럼명을 쉼표로 구분하여 입력하세요: ").strip()
+        cols = [c.strip() for c in cols_str.split(",") if c.strip()]
+        if not cols:
+            print("수정할 컬럼을 하나 이상 입력해야 합니다.")
+            return
+
+        # 4) 각 컬럼에 대한 새로운 값 입력
+        updates = {}
+        for col in cols:
+            val = input(f"{col}의 새로운 값을 입력하세요: ").strip()
+            updates[col] = val
+
+        # 5) UPDATE CQL 생성 및 실행
+        set_clause = ", ".join(f"{col} = %({col})s" for col in updates)
+        query = f"UPDATE rtd_db SET {set_clause} WHERE id = %(id)s"
+        params = {**updates, "id": id_uuid}
+        try:
+            self.session.execute(query, params)
+            print("수정이 완료되었습니다.")
+        except Exception as e:
+            print(f"수정 중 오류 발생: {e}")
+
+    # process_command에 edit_rtd 명령어 처리 추가
+    # display_help에도 안내 문구 추가
 
     def check_and_save(self):
         messages = self.check_messages()
@@ -1209,6 +1257,8 @@ class DisasterMessageCrawler:
             for name, interval in tasks.items():
                 print(f"{name}: {interval}초")
             print("=======================")
+        elif cmd == "edit_rtd":
+            self.edit_rtd_entry()
         elif cmd == "?":
             self.display_help()
         else:
@@ -1228,6 +1278,7 @@ class DisasterMessageCrawler:
         print(" 9 → 재난문자 수집")
         print(" set_interval <task_name> <초> → 지정 작업 주기 수정")
         print(" list_intervals → 현재 등록된 스케줄 주기 확인")
+        print(" edit_rtd → rtd_db 항목 수정 (ID 입력 후 컬럼/값 순차적으로 입력)")
         print(" ? → 명령어 도움말")
         print(" q 또는 exit → 종료")
 
