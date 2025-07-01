@@ -295,57 +295,46 @@ def geocoding(address: str) -> dict:
 
     # 캐시 확인
     if address in geocode_cache:
-        return {**geocode_cache[address], "source": "cache"}
-    if cleaned_address in geocode_cache:
-        return {**geocode_cache[cleaned_address], "source": "cache"}
+        result = {**geocode_cache[address], "source": "cache"}
+    elif cleaned_address in geocode_cache:
+        result = {**geocode_cache[cleaned_address], "source": "cache"}
+    else:
+        # 내부 시도 함수
+        def try_geocode(query):
+            try:
+                geo = geolocator.geocode(query, timeout=3)
+                if geo:
+                    return {"lat": str(geo.latitude), "lng": str(geo.longitude)}
+            except Exception as e:
+                logging.warning(f"[Geocoding 오류] '{query}': {e}")
+            return {"lat": None, "lng": None}
 
-    # 내부 시도 함수
-    def try_geocode(query):
-        try:
-            geo = geolocator.geocode(query, timeout=3)
-            if geo:
-                return {"lat": str(geo.latitude), "lng": str(geo.longitude)}
-        except Exception as e:
-            logging.warning(f"[Geocoding 오류] '{query}': {e}")
-        return {"lat": None, "lng": None}
+        # 1차 시도: 원본
+        result = try_geocode(address)
+        # 2차 시도: 괄호 제거 주소
+        if result["lat"] is None and cleaned_address != address:
+            result = try_geocode(cleaned_address)
 
-    # 1차 시도: 원본
-    result = try_geocode(address)
+        # 실패 시 로그 기록
+        if result["lat"] is None:
+            with open(FAILED_LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(f"{datetime.now()} | 주소 실패: {address}\n")
 
-    # 2차: 괄호 제거 주소
-    if result["lat"] is None and cleaned_address != address:
-        result = try_geocode(cleaned_address)
-        if result["lat"] is not None:
-            logging.info(f"[Geocoding API] '{cleaned_address}' → lat: {result['lat']}, lon: {result['lng']}")
+        # 캐시에 저장
+        geocode_cache[cleaned_address] = { "lat": result["lat"], "lng": result["lng"] }
+        save_geocode_cache()
 
-    # 3차: fallback 시도
-    if result["lat"] is None:
-        fallback_candidates = [
-            cleaned_address,
-            "충남 " + cleaned_address,
-            cleaned_address + "군",
-            cleaned_address + "구"
-        ]
-        for fallback in fallback_candidates:
-            result = try_geocode(fallback)
-            if result["lat"] is not None:
-                logging.info(f"[Geocoding API] '{fallback}' → lat: {result['lat']}, lon: {result['lng']}")
-                break
+        result["source"] = "api"
 
-    # 실패 시 로그 기록
-    if result["lat"] is None:
-        with open(FAILED_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(f"{datetime.now()} | 주소 실패: {address}\n")
+    # 결과가 있을 때 범위 체크
+    if result["lat"] and result["lng"]:
+        lat_f = float(result["lat"])
+        lng_f = float(result["lng"])
+        # 대한민국 대략 범위: 위도 33~43, 경도 124~132
+        if not (33.0 <= lat_f <= 43.0 and 124.0 <= lng_f <= 132.0):
+            raise ValueError(f"Geocoding 결과가 대한민국 범위를 벗어났습니다: lat={lat_f}, lng={lng_f}")
 
-    # 캐시에 저장
-    geocode_cache[cleaned_address] = result
-    save_geocode_cache()
-
-    # API로 조회한 경우에만 가볍게 로그 출력
-    if result["lat"] is not None:
-        logging.info(f"[Geocoding API] '{address}' → lat: {result['lat']}, lon: {result['lng']}")
-
-    return {**result, "source": "api"}
+    return result
 
 
 
