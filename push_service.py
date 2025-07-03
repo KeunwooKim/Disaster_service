@@ -213,7 +213,7 @@ class VoteByIDRequest(BaseModel):
 def vote_to_delete_by_report_id(data: VoteByIDRequest):
     try:
         # 1. 기존 데이터 조회
-        query = "SELECT delete_vote, vote_user_ids, visible FROM user_report_by_id WHERE report_id = %s"
+        query = "SELECT report_by_id, report_at, delete_vote, vote_user_ids, visible FROM user_report WHERE report_id = %s ALLOW FILTERING"
         row = session.execute(query, (data.report_id,)).one()
 
         if not row:
@@ -230,13 +230,13 @@ def vote_to_delete_by_report_id(data: VoteByIDRequest):
 
         # 3. 업데이트
         update_q = """
-            UPDATE user_report_by_id
+            UPDATE user_report
             SET vote_user_ids = %s,
                 delete_vote = %s,
                 visible = %s
-            WHERE report_id = %s
+            WHERE report_by_id = %s AND report_at = %s
         """
-        session.execute(update_q, (voter_ids, new_count, visible_flag, data.report_id))
+        session.execute(update_q, (voter_ids, new_count, visible_flag, row.report_by_id, row.report_at))
 
         return JSONResponse(content={
             "message": "투표 완료",
