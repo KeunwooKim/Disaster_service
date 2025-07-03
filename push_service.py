@@ -213,30 +213,30 @@ class VoteByIDRequest(BaseModel):
 def vote_to_delete_by_report_id(data: VoteByIDRequest):
     try:
         # 1. 기존 데이터 조회
-        query = "SELECT delete_vote, vote_id, visible FROM user_report_by_id WHERE report_id = %s"
+        query = "SELECT delete_vote, vote_user_ids, visible FROM user_report_by_id WHERE report_id = %s"
         row = session.execute(query, (data.report_id,)).one()
 
         if not row:
             raise HTTPException(status_code=404, detail="해당 제보를 찾을 수 없습니다.")
 
-        vote_ids = row.vote_id or []
-        if data.user_id in vote_ids:
+        voter_ids = row.vote_user_ids or []
+        if data.user_id in voter_ids:
             raise HTTPException(status_code=400, detail="이미 이 제보에 투표하셨습니다.")
 
         # 2. 투표 추가 및 비활성 여부 판단
-        vote_ids.append(data.user_id)
+        voter_ids.append(data.user_id)
         new_count = (row.delete_vote or 0) + 1
         visible_flag = False if new_count >= 10 else True
 
         # 3. 업데이트
         update_q = """
             UPDATE user_report_by_id
-            SET vote_id = %s,
+            SET vote_user_ids = %s,
                 delete_vote = %s,
                 visible = %s
             WHERE report_id = %s
         """
-        session.execute(update_q, (vote_ids, new_count, visible_flag, data.report_id))
+        session.execute(update_q, (voter_ids, new_count, visible_flag, data.report_id))
 
         return JSONResponse(content={
             "message": "투표 완료",
