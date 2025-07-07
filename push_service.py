@@ -392,20 +392,19 @@ def search_rtd(
         report_rows = session.execute(report_query, (start_time, end_time))
 
         for row in report_rows:
-            if getattr(row, 'visible', True):
-                report_results.append({
-                    "type": "report",
-                    "id": str(row.report_id),
-                    "time": row.report_at.isoformat() if row.report_at else None,
-                    "report_location": row.report_location,
-                    "middle_type": row.middle_type,
-                    "small_type": row.small_type,
-                    "content": row.report_content,
-                    "report_by": row.report_by_id,
-                    "latitude": row.report_lat,
-                    "longitude": row.report_lot,
-                    "delete_vote": row.delete_vote
-                })
+            report_results.append({
+                "type": "report",
+                "id": str(row.report_id),
+                "time": row.report_at.isoformat() if row.report_at else None,
+                "report_location": row.report_location,
+                "middle_type": row.middle_type,
+                "small_type": row.small_type,
+                "content": row.report_content,
+                "report_by": row.report_by_id,
+                "latitude": row.report_lat,
+                "longitude": row.report_lot,
+                "delete_vote": row.delete_vote
+            })
 
         # === 3) 통합 정렬 ===
         merged_results = rtd_results + report_results
