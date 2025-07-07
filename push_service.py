@@ -307,8 +307,8 @@ def delete_user_report(data: DeleteReportRequest = Body(...)):
             raise HTTPException(status_code=403, detail="해당 제보의 작성자가 아닙니다.")
 
         # 3. 삭제 (원본 테이블에서)
-        delete_query = "DELETE FROM user_report WHERE report_by_id = %s AND report_at = %s"
-        session.execute(delete_query, (result.report_by_id, result.report_at))
+        delete_query = "DELETE FROM user_report WHERE report_by_id = %s AND report_at = %s AND report_id = %s"
+        session.execute(delete_query, (result.report_by_id, result.report_at, data.report_id))
 
         return {"message": "제보가 삭제되었습니다."}
 
