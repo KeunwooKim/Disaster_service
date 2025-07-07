@@ -403,6 +403,7 @@ def search_rtd(
                 "report_by": row.report_by_id,
                 "latitude": row.report_lat,
                 "longitude": row.report_lot,
+                "visible": row.visible,
                 "delete_vote": row.delete_vote
             })
 
