@@ -122,7 +122,8 @@ def get_user_report_history(
                 "latitude": row.report_lat,
                 "longitude": row.report_lot,
                 "visible": row.visible,
-                "delete_vote": row.delete_vote
+                "delete_vote": row.delete_vote,
+                "report_by_id": row.report_by_id
             })
 
         return JSONResponse(content={"count": len(reports), "results": reports})
