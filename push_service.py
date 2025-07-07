@@ -291,30 +291,67 @@ class DeleteReportRequest(BaseModel):
 
 @app.delete("/report/delete")
 def delete_user_report(data: DeleteReportRequest = Body(...)):
+    from cassandra.query import BatchStatement, SimpleStatement
     try:
-        # 1. report_by_id, report_at 조회
+        # 1. 삭제할 제보의 모든 필드 조회
         query = """
-            SELECT report_by_id, report_at FROM user_report 
+            SELECT report_id, report_by_id, report_at, delete_vote, middle_type, small_type,
+                   report_content, report_lat, report_location, report_lot, visible, vote_user_ids
+            FROM user_report
             WHERE report_id = %s ALLOW FILTERING
         """
-        result = session.execute(query, (data.report_id,)).one()
+        report_to_delete = session.execute(query, (data.report_id,)).one()
 
-        if not result:
+        if not report_to_delete:
             raise HTTPException(status_code=404, detail="해당 제보를 찾을 수 없습니다.")
 
         # 2. 작성자 확인
-        if result.report_by_id != data.user_id:
+        if report_to_delete.report_by_id != data.user_id:
             raise HTTPException(status_code=403, detail="해당 제보의 작성자가 아닙니다.")
 
-        # 3. 삭제 (원본 테이블에서)
-        delete_query = "DELETE FROM user_report WHERE report_by_id = %s AND report_at = %s"
-        session.execute(delete_query, (result.report_by_id, result.report_at))
+        # 3. 배치 생성
+        batch = BatchStatement()
+        deleted_at = datetime.utcnow()
 
-        return {"message": "제보가 삭제되었습니다."}
+        # 4. deleted_user_report 테이블에 삽입
+        insert_deleted_query = """
+            INSERT INTO deleted_user_report (
+                report_id, deleted_at, report_by_id, report_at, delete_vote, middle_type,
+                report_content, report_lat, report_location, report_lot, small_type,
+                visible, vote_user_ids, deleted_by_user_id
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        batch.add(SimpleStatement(insert_deleted_query), (
+            report_to_delete.report_id,
+            deleted_at,
+            report_to_delete.report_by_id,
+            report_to_delete.report_at,
+            report_to_delete.delete_vote,
+            report_to_delete.middle_type,
+            report_to_delete.report_content,
+            report_to_delete.report_lat,
+            report_to_delete.report_location,
+            report_to_delete.report_lot,
+            report_to_delete.small_type,
+            report_to_delete.visible,
+            report_to_delete.vote_user_ids,
+            data.user_id # deleted_by_user_id
+        ))
 
+        # 5. user_report 테이블에서 삭제
+        delete_original_query = "DELETE FROM user_report WHERE report_by_id = %s AND report_at = %s"
+        batch.add(SimpleStatement(delete_original_query), (report_to_delete.report_by_id, report_to_delete.report_at))
+
+        # 6. 배치 실행
+        session.execute(batch)
+
+        return {"message": "제보가 성공적으로 삭제(아카이빙)되었습니다."}
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(f"제보 삭제 실패: {e}")
-        raise HTTPException(status_code=500, detail="제보 삭제 실패")
+        logging.error(f"제보 삭제(아카이빙) 실패: {e}")
+        raise HTTPException(status_code=500, detail="제보 삭제(아카이빙) 실패")
 @app.get("/rtd/search")
 def search_rtd(
     rtd_loc: Optional[str] = None,
