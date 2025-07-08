@@ -258,7 +258,7 @@ def vote_on_rtd(data: RtdVoteRequest):
     try:
         # 1. Fetch current vote status
         query = """
-            SELECT vote_count, vote_user_ids
+            SELECT vote_count, vote_user_ids, visible
             FROM rtd_db
             WHERE rtd_time = %s AND id = %s
         """
@@ -274,17 +274,19 @@ def vote_on_rtd(data: RtdVoteRequest):
         # 2. Update vote count and user IDs
         voter_ids.append(data.user_id)
         new_count = (row.vote_count or 0) + 1
+        visible_flag = False if new_count >= 10 else True # 10표 이상이면 visible = False
 
         update_query = """
             UPDATE rtd_db
-            SET vote_count = %s, vote_user_ids = %s
+            SET vote_count = %s, vote_user_ids = %s, visible = %s
             WHERE rtd_time = %s AND id = %s
         """
-        session.execute(update_query, (new_count, voter_ids, data.rtd_time, data.rtd_id))
+        session.execute(update_query, (new_count, voter_ids, visible_flag, data.rtd_time, data.rtd_id))
 
         return JSONResponse(content={
             "message": "RTD 투표 완료",
-            "vote_count": new_count
+            "vote_count": new_count,
+            "visible": visible_flag
         })
 
     except HTTPException:
