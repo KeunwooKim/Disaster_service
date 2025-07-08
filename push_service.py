@@ -246,6 +246,7 @@ def vote_to_delete_by_report_id(data: VoteByIDRequest):
         })
 
     except Exception as e:
+        logging.error(f"투표 처리 실패: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 class RtdVoteRequest(BaseModel):
