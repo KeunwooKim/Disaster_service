@@ -34,7 +34,7 @@ from firebase_admin import messaging
 # Firebase 초기화
 # cred_path는 실제 서비스 계정 키 파일의 경로로 설정해야 합니다.
 # 예시: cred_path = os.getenv("FIREBASE_CRED_PATH", "/path/to/your/firebase-adminsdk.json")
-cred_path = "/Users/keunwookim/Documents/Disaster_service/disaster-9dbd5-firebase-adminsdk-fbsvc-c4498ef23c.json" # 실제 경로로 변경 필요
+cred_path = "/root/Project_disaster/disaster-9dbd5-firebase-adminsdk-fbsvc-c4498ef23c.json"
 cred = credentials.Certificate(cred_path)
 firebase_admin.initialize_app(cred)
 

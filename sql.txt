@@ -1,1 +1,3 @@
-SELECT rtd_time, id, rtd_code, rtd_loc FROM disaster_service.rtd_db LIMIT 5;
+sudo yum groupinstall -y "Development Tools" --nogpgcheck
+sudo yum install -y gcc openssl-devel bzip2-devel libffi-devel wget make zlib-devel --nogpgcheck
+AQ
