@@ -280,9 +280,31 @@ def save_geocode_cache():
         logging.warning(f"[캐시 저장 실패] {e}")
 
 # 지오코딩 함수
+def geocoding(address: str) -> dict:
+    if not address:
+        return {"lat": None, "lng": None}
 
+    # 괄호 제거
+    cleaned_address = re.sub(r"\(.*?\)", "", address).strip()
 
+    # 캐시 조회
+    if cleaned_address in geocode_cache:
+        return geocode_cache[cleaned_address]
 
+    # 지오코딩 요청
+    try:
+        location = geolocator.geocode(cleaned_address, timeout=5)
+        if location:
+            coords = {"lat": location.latitude, "lng": location.longitude}
+            geocode_cache[cleaned_address] = coords
+            save_geocode_cache()
+            return coords
+    except Exception as e:
+        logging.warning(f"[지오코딩 실패] ({cleaned_address}): {e}")
+        with open(FAILED_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now()} | 실패 주소: {cleaned_address}\n")
+
+    return {"lat": None, "lng": None}
 
 
 # 행정구역 코드 조회
