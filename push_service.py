@@ -469,6 +469,8 @@ def search_rtd(
                 "regioncode": getattr(row, 'regioncode', None),
                 "latitude": getattr(row, 'latitude', None),
                 "longitude": getattr(row, 'longitude', None),
+                "vote_count": getattr(row, 'vote_count', 0),
+                "visible": getattr(row, 'visible', True),
             })
 
         # === 2) user_report 테이블 조회 ===
