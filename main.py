@@ -209,7 +209,10 @@ def send_fcm_notification(token: str, title: str, body: str):
         response = messaging.send(message)
         logging.info(f"FCM 메시지 전송 성공 (token: {token[:10]}..., response: {response})")
     except Exception as e:
-        logging.error(f"FCM 메시지 전송 실패 (token: {token[:10]}...): {e}")
+        if "invalid_grant" in str(e):
+            logging.error(f"FCM 메시지 전송 실패 (token: {token[:10]}...): 유효하지 않거나 만료된 토큰입니다.")
+        else:
+            logging.error(f"FCM 메시지 전송 실패 (token: {token[:10]}...): {e}")
 
 
 # ---------------------------------------------------------------------------
