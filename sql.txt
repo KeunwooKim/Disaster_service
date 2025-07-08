@@ -1,7 +1,1 @@
-CREATE MATERIALIZED VIEW IF NOT EXISTS disaster_service.user_report_by_id AS
-SELECT report_id, report_by_id, report_at, middle_type, small_type,
-       report_location, report_content, report_lat, report_lot,
-       visible, delete_vote, vote_id
-FROM user_report
-WHERE report_id IS NOT NULL AND report_by_id IS NOT NULL AND report_at IS NOT NULL
-PRIMARY KEY (report_id, report_by_id, report_at);
+SELECT rtd_time, id, rtd_code, rtd_loc FROM disaster_service.rtd_db LIMIT 5;
