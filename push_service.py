@@ -524,6 +524,7 @@ class UserDeviceRequest(BaseModel):
 # 디바이스 등록 API
 @app.post("/devices/register")
 def register_device(data: UserDeviceRequest):
+    print(f"device register data: {data}")
     try:
         # user_id 중복 확인
         check_user_query = "SELECT * FROM user_device WHERE user_id = %s"

@@ -4,6 +4,7 @@ from firebase_admin import messaging
 
 #cred_path = "/Users/keunwookim/Documents/Python/DisasterAPI/disaster-9dbd5-firebase-adminsdk-fbsvc-c4498ef23c.json"
 cred_path = "/root/Project_disaster/disasteralert-bc125-firebase-adminsdk-fbsvc-808e3fc9d3.json"
+
 cred = credentials.Certificate(cred_path)
 firebase_admin.initialize_app(cred)
 
