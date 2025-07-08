@@ -33,7 +33,7 @@ except Exception as e:
 
 # Firebase 서비스 계정 키 파일 경로
 # 이 경로는 Firebase 프로젝트에서 다운로드한 JSON 파일의 경로여야 합니다.
-cred_path = "/root/Project_disaster/disaster-9dbd5-firebase-adminsdk-fbsvc-c4498ef23c.json"
+cred_path = "/root/Project_disaster/disasteralert-bc125-firebase-adminsdk-fbsvc-808e3fc9d3.json"
 
 # 파일 존재 여부 확인
 if not os.path.exists(cred_path):
