@@ -247,6 +247,51 @@ def vote_to_delete_by_report_id(data: VoteByIDRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+class RtdVoteRequest(BaseModel):
+    rtd_time: datetime
+    rtd_id: UUID
+    user_id: str
+
+@app.post("/rtd/vote")
+def vote_on_rtd(data: RtdVoteRequest):
+    try:
+        # 1. Fetch current vote status
+        query = """
+            SELECT vote_count, vote_user_ids
+            FROM rtd_db
+            WHERE rtd_time = %s AND id = %s
+        """
+        row = session.execute(query, (data.rtd_time, data.rtd_id)).one()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="해당 RTD 항목을 찾을 수 없습니다.")
+
+        voter_ids = row.vote_user_ids or []
+        if data.user_id in voter_ids:
+            raise HTTPException(status_code=400, detail="이미 이 RTD 항목에 투표하셨습니다.")
+
+        # 2. Update vote count and user IDs
+        voter_ids.append(data.user_id)
+        new_count = (row.vote_count or 0) + 1
+
+        update_query = """
+            UPDATE rtd_db
+            SET vote_count = %s, vote_user_ids = %s
+            WHERE rtd_time = %s AND id = %s
+        """
+        session.execute(update_query, (new_count, voter_ids, data.rtd_time, data.rtd_id))
+
+        return JSONResponse(content={
+            "message": "RTD 투표 완료",
+            "vote_count": new_count
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"RTD 투표 실패: {e}")
+        raise HTTPException(status_code=500, detail="RTD 투표 실패")
 @app.get("/report/user_history")
 def get_reports_by_user(
     user_id: str = Query(..., description="제보자 ID"),
