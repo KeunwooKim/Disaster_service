@@ -27,6 +27,17 @@ import pandas as pd
 from functools import partial
 from ner_utils import extract_locations
 
+import firebase_admin
+from firebase_admin import credentials
+from firebase_admin import messaging
+
+# Firebase 초기화
+# cred_path는 실제 서비스 계정 키 파일의 경로로 설정해야 합니다.
+# 예시: cred_path = os.getenv("FIREBASE_CRED_PATH", "/path/to/your/firebase-adminsdk.json")
+cred_path = "/Users/keunwookim/Documents/Disaster_service/disaster-9dbd5-firebase-adminsdk-fbsvc-c4498ef23c.json" # 실제 경로로 변경 필요
+cred = credentials.Certificate(cred_path)
+firebase_admin.initialize_app(cred)
+
 # ---------------------------------------------------------------------------
 # 설정 및 전역변수
 # ---------------------------------------------------------------------------
@@ -46,6 +57,9 @@ okt = Okt()
 
 # API 호출 시 세션 재사용
 session_http = requests.Session()
+
+# FCM 알림 전역 상태 플래그
+FCM_NOTIFICATIONS_ENABLED = True
 
 # 상수 정의
 STATION_CODES = {
@@ -182,6 +196,20 @@ def execute_cassandra(query: str, params: tuple):
     except Exception as e:
         logging.error(f"Cassandra 쿼리 실행 오류: {e}")
         return False
+
+def send_fcm_notification(token: str, title: str, body: str):
+    try:
+        message = messaging.Message(
+            notification=messaging.Notification(
+                title=title,
+                body=body,
+            ),
+            token=token,
+        )
+        response = messaging.send(message)
+        logging.info(f"FCM 메시지 전송 성공 (token: {token[:10]}..., response: {response})")
+    except Exception as e:
+        logging.error(f"FCM 메시지 전송 실패 (token: {token[:10]}...): {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +359,46 @@ def insert_rtd_data(rtd_code, rtd_time, rtd_loc, rtd_details,
     )
     if execute_cassandra(q, params):
         logging.info(f"RTD 저장 성공: {rec_id}")
+
+        # FCM 알림 발송 로직 추가 (FCM_NOTIFICATIONS_ENABLED가 True일 때만)
+        global FCM_NOTIFICATIONS_ENABLED
+        if FCM_NOTIFICATIONS_ENABLED:
+            title = "재난 알림"
+            body = f"새로운 재난 정보가 발생했습니다: {rtd_loc} - {', '.join(rtd_details)}"
+
+            # rtd_code에 따른 알림 내용 커스터마이징
+            if rtd_code == 72: # 대기질 예보
+                title = "대기질 예보 알림"
+                body = f"[{rtd_loc}] 대기질 예보: {', '.join(rtd_details)}"
+            elif rtd_code == 71: # 실시간 대기질 등급
+                title = "실시간 대기질 알림"
+                body = f"[{rtd_loc}] 실시간 대기질: {', '.join(rtd_details)}"
+            elif rtd_code == 51: # 지진 정보
+                title = "지진 발생 알림"
+                body = f"[{rtd_loc}] 지진 발생: {', '.join(rtd_details)}"
+            elif rtd_code == 31: # 태풍 정보
+                title = "태풍 정보 알림"
+                body = f"[{rtd_loc}] 태풍 정보: {', '.join(rtd_details)}"
+            elif rtd_code == 33: # 홍수 정보
+                title = "홍수 정보 알림"
+                body = f"[{rtd_loc}] 홍수 정보: {', '.join(rtd_details)}"
+            elif rtd_code in WARNING_CODES.values(): # 기상특보
+                title = "기상특보 알림"
+                body = f"[{rtd_loc}] 기상특보: {', '.join(rtd_details)}"
+            elif rtd_code == 21: # 재난문자
+                title = "재난문자 알림"
+                body = f"[{rtd_loc}] 재난문자: {', '.join(rtd_details)}"
+
+            # user_device 테이블에서 모든 device_token 조회
+            try:
+                device_tokens_query = "SELECT device_token FROM user_device"
+                device_tokens_rows = connector.session.execute(device_tokens_query)
+                for token_row in device_tokens_rows:
+                    if token_row.device_token:
+                        send_fcm_notification(token_row.device_token, title, body)
+            except Exception as e:
+                logging.error(f"디바이스 토큰 조회 또는 FCM 발송 오류: {e}")
+
     else:
         logging.error(f"RTD 저장 실패: {rec_id}")
 
@@ -1095,11 +1163,12 @@ class DisasterMessageCrawler:
             logging.info("스케줄러: 신규 재난문자 없음")
 
     def show_status(self):
+        global FCM_NOTIFICATIONS_ENABLED
         print("=== 저장 현황 ===")
         for table in [
             "airinform", "airgrade", "domestic_earthquake",
             "domestic_typhoon", "disaster_message", "forecastannouncement",
-            "realtimeflood", "rtd_db"
+            "realtimeflood", "rtd_db", "user_device"
         ]:
             try:
                 stmt = SimpleStatement(f"SELECT count(*) FROM {table};")
@@ -1108,9 +1177,11 @@ class DisasterMessageCrawler:
                     print(f"{table}: {row.count}건")
             except Exception as e:
                 print(f"{table}: 오류 발생 ({str(e).splitlines()[0]})")
+        print(f"FCM 알림 상태: {'활성화' if FCM_NOTIFICATIONS_ENABLED else '비활성화'}")
         print("=================")
 
     def process_command(self, cmd):
+        global FCM_NOTIFICATIONS_ENABLED
         if cmd in ["q", "exit"]:
             logging.info("모니터링 종료")
             return True
@@ -1155,6 +1226,9 @@ class DisasterMessageCrawler:
                 logging.info(f"신규 메시지 {len(messages)}건 저장됨")
             else:
                 logging.info("신규 재난문자 없음")
+        elif cmd == "toggle_fcm":
+            FCM_NOTIFICATIONS_ENABLED = not FCM_NOTIFICATIONS_ENABLED
+            print(f"FCM 알림이 {'활성화' if FCM_NOTIFICATIONS_ENABLED else '비활성화'}되었습니다.")
         elif cmd.startswith("set_interval"):
             tokens = cmd.split()
             if len(tokens) != 3:
@@ -1194,6 +1268,7 @@ class DisasterMessageCrawler:
         print(" 7 → 홍수 정보 수집")
         print(" 8 → 기상특보(주의보/경보) 정보 수집")
         print(" 9 → 재난문자 수집")
+        print(" toggle_fcm → FCM 알림 활성화/비활성화")
         print(" set_interval <task_name> <초> → 지정 작업 주기 수정")
         print(" list_intervals → 현재 등록된 스케줄 주기 확인")
         print(" edit_rtd → rtd_db 항목 수정 (ID 입력 후 컬럼/값 순차적으로 입력)")
