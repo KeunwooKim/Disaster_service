@@ -7,7 +7,7 @@ from cassandra.auth import PlainTextAuthProvider
 import os
 from dotenv import load_dotenv
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from pydantic import BaseModel
 
@@ -82,12 +82,12 @@ def get_user_report_history(
     to_time: Optional[str] = None,
     days: Optional[int] = 7
 ):
-    now = datetime.utcnow()
+    now = datetime.utcnow().replace(tzinfo=timezone.utc)
 
     try:
         if from_time and to_time:
-            start_time = datetime.fromisoformat(from_time)
-            end_time = datetime.fromisoformat(to_time)
+            start_time = datetime.fromisoformat(from_time).astimezone(timezone.utc)
+            end_time = datetime.fromisoformat(to_time).astimezone(timezone.utc)
         else:
             end_time = now
             start_time = now - timedelta(days=days)
@@ -174,7 +174,16 @@ def create_user_report(request: UserReportRequest):
         if result is None:
             raise HTTPException(status_code=404, detail="사용자 정보가 존재하지 않습니다.")
 
-        report_time = datetime.fromisoformat(request.disasterTime) if request.disasterTime else datetime.utcnow()
+        if request.disasterTime:
+            dt_obj = datetime.fromisoformat(request.disasterTime)
+            if dt_obj.tzinfo is None: # Naive datetime, assume KST (UTC+9)
+                report_time = dt_obj - timedelta(hours=9)
+                report_time = report_time.replace(tzinfo=timezone.utc)
+            else: # Timezone-aware datetime
+                report_time = dt_obj.astimezone(timezone.utc)
+        else:
+            report_time = datetime.utcnow().replace(tzinfo=timezone.utc)
+
         report_id = uuid4()
 
         small_type = request.disasterType
@@ -423,12 +432,12 @@ def search_rtd(
     days: Optional[int] = 1,
     sort: Optional[str] = Query("desc", description="정렬 순서: asc 또는 desc")
 ):
-    now = datetime.utcnow()
+    now = datetime.utcnow().replace(tzinfo=timezone.utc)
 
     try:
         if from_time and to_time:
-            start_time = datetime.fromisoformat(from_time)
-            end_time = datetime.fromisoformat(to_time)
+            start_time = datetime.fromisoformat(from_time).astimezone(timezone.utc)
+            end_time = datetime.fromisoformat(to_time).astimezone(timezone.utc)
         else:
             end_time = now
             start_time = now - timedelta(days=days)
