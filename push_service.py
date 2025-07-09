@@ -111,7 +111,6 @@ def get_user_report_history(
                 SELECT * FROM user_report_by_time
                 WHERE report_at >= %s AND report_at <= %s
                 ALLOW FILTERING
-                ORDER BY report_at DESC
             """
             rows = session.execute(query, (start_time, end_time))
 
@@ -131,7 +130,10 @@ def get_user_report_history(
                 "report_by_id": row.report_by_id
             })
 
-        return JSONResponse(content={"count": len(reports), "results": reports})
+        # Python에서 report_time을 기준으로 내림차순 정렬
+        reports.sort(key=lambda x: x.get("report_time") or "", reverse=True)
+
+        return JSONResponse(content={"events": reports, "count": len(reports)})
 
     except Exception as e:
         logging.error(f"제보 내역 조회 실패: {e}")
