@@ -461,6 +461,14 @@ def search_rtd(
             rtd_rows = session.execute(rtd_query, (start_time, end_time))
 
         for row in rtd_rows:
+            # rtd_db에서 최신 visible 상태 조회
+            rtd_db_query = "SELECT visible FROM rtd_db WHERE rtd_time = %s AND id = %s"
+            rtd_db_row = session.execute(rtd_db_query, (row.rtd_time, row.id)).one()
+
+            current_visible = True # 기본값은 True
+            if rtd_db_row and hasattr(rtd_db_row, 'visible'):
+                current_visible = rtd_db_row.visible
+
             rtd_results.append({
                 "type": "rtd",
                 "id": str(row.id),
@@ -472,7 +480,7 @@ def search_rtd(
                 "latitude": getattr(row, 'latitude', None),
                 "longitude": getattr(row, 'longitude', None),
                 "vote_count": getattr(row, 'vote_count', 0),
-                "visible": getattr(row, 'visible', True),
+                "visible": current_visible, # rtd_db에서 조회한 visible 값 사용
             })
 
         # === 2) user_report 테이블 조회 ===
