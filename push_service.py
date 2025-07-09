@@ -89,7 +89,7 @@ def get_user_report_history(
             start_time = datetime.fromisoformat(from_time).astimezone(timezone.utc)
             end_time = datetime.fromisoformat(to_time).astimezone(timezone.utc)
         else:
-            end_time = now
+            end_time = now + timedelta(seconds=1)
             start_time = now - timedelta(days=days)
 
         logging.info(f"User Report History - Querying from {start_time} to {end_time}")
@@ -212,48 +212,6 @@ def create_user_report(request: UserReportRequest):
             request.reportContent,
             request.latitude,
             request.longitude
-        ))
-
-        # user_report_by_user_time 테이블에 삽입
-        insert_by_user_time_query = """
-            INSERT INTO user_report_by_user_time (
-                report_by_id, report_at, report_id, middle_type, small_type,
-                report_location, report_content, report_lat, report_lot,
-                visible, delete_vote, vote_id
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, true, 0, [])
-        """
-        session.execute(insert_by_user_time_query, (
-            request.userId,
-            report_time,
-            report_id,
-            middle_type,
-            small_type,
-            request.disasterPos,
-            request.reportContent,
-            request.latitude,
-            request.longitude
-        ))
-
-        # user_report_by_time 테이블에 삽입
-        insert_by_time_query = """
-            INSERT INTO user_report_by_time (
-                report_at, report_id, middle_type, small_type,
-                report_location, report_content, report_lat, report_lot,
-                visible, delete_vote, vote_id, report_by_id
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, true, 0, [], %s)
-        """
-        session.execute(insert_by_time_query, (
-            report_time,
-            report_id,
-            middle_type,
-            small_type,
-            request.disasterPos,
-            request.reportContent,
-            request.latitude,
-            request.longitude,
-            request.userId
         ))
 
         logging.info(f"New user report created: report_id={report_id}, report_time={report_time}")
@@ -481,7 +439,7 @@ def search_rtd(
             start_time = datetime.fromisoformat(from_time).astimezone(timezone.utc)
             end_time = datetime.fromisoformat(to_time).astimezone(timezone.utc)
         else:
-            end_time = now
+            end_time = now + timedelta(seconds=1)
             start_time = now - timedelta(days=days)
 
         logging.info(f"RTD Search - Querying from {start_time} to {end_time}")
