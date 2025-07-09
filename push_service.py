@@ -279,6 +279,8 @@ def vote_on_rtd(data: RtdVoteRequest):
         new_count = (row.vote_count or 0) + 1
         visible_flag = False if new_count >= 10 else True # 10표 이상이면 visible = False
 
+        logging.info(f"RTD Vote - Before update: rtd_id={data.rtd_id}, current_vote_count={row.vote_count}, new_count={new_count}, visible_flag={visible_flag}")
+
         update_query = """
             UPDATE rtd_db
             SET vote_count = %s, vote_user_ids = %s, visible = %s
