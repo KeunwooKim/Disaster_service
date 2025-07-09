@@ -214,6 +214,48 @@ def create_user_report(request: UserReportRequest):
             request.longitude
         ))
 
+        # user_report_by_user_time 테이블에 삽입
+        insert_by_user_time_query = """
+            INSERT INTO user_report_by_user_time (
+                report_by_id, report_at, report_id, middle_type, small_type,
+                report_location, report_content, report_lat, report_lot,
+                visible, delete_vote, vote_id
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, true, 0, [])
+        """
+        session.execute(insert_by_user_time_query, (
+            request.userId,
+            report_time,
+            report_id,
+            middle_type,
+            small_type,
+            request.disasterPos,
+            request.reportContent,
+            request.latitude,
+            request.longitude
+        ))
+
+        # user_report_by_time 테이블에 삽입
+        insert_by_time_query = """
+            INSERT INTO user_report_by_time (
+                report_at, report_id, middle_type, small_type,
+                report_location, report_content, report_lat, report_lot,
+                visible, delete_vote, vote_id, report_by_id
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, true, 0, [], %s)
+        """
+        session.execute(insert_by_time_query, (
+            report_time,
+            report_id,
+            middle_type,
+            small_type,
+            request.disasterPos,
+            request.reportContent,
+            request.latitude,
+            request.longitude,
+            request.userId
+        ))
+
         logging.info(f"New user report created: report_id={report_id}, report_time={report_time}")
 
         return {"message": "제보가 성공적으로 저장되었습니다.", "report_id": str(report_id)}
