@@ -91,6 +91,9 @@ def get_user_report_history(
         else:
             end_time = now
             start_time = now - timedelta(days=days)
+
+        logging.info(f"User Report History - Querying from {start_time} to {end_time}")
+
     except ValueError:
         raise HTTPException(status_code=400, detail="시간 형식이 잘못되었습니다 (ISO 8601)")
 
@@ -100,6 +103,7 @@ def get_user_report_history(
                 SELECT * FROM user_report_by_user_time
                 WHERE report_by_id = %s AND report_at >= %s AND report_at <= %s
                 ALLOW FILTERING
+                ORDER BY report_at DESC
             """
             rows = session.execute(query, (userId, start_time, end_time))
         else:
@@ -107,6 +111,7 @@ def get_user_report_history(
                 SELECT * FROM user_report_by_time
                 WHERE report_at >= %s AND report_at <= %s
                 ALLOW FILTERING
+                ORDER BY report_at DESC
             """
             rows = session.execute(query, (start_time, end_time))
 
@@ -197,6 +202,8 @@ def create_user_report(request: UserReportRequest):
             request.latitude,
             request.longitude
         ))
+
+        logging.info(f"New user report created: report_id={report_id}, report_time={report_time}")
 
         return {"message": "제보가 성공적으로 저장되었습니다.", "report_id": str(report_id)}
 
@@ -423,6 +430,9 @@ def search_rtd(
         else:
             end_time = now
             start_time = now - timedelta(days=days)
+
+        logging.info(f"RTD Search - Querying from {start_time} to {end_time}")
+
     except ValueError:
         raise HTTPException(status_code=400, detail="시간 형식이 잘못되었습니다 (ISO 8601)")
 
