@@ -12,6 +12,12 @@ from io import StringIO
 from uuid import uuid4, uuid5, NAMESPACE_DNS
 from dotenv import load_dotenv
 
+# .env 파일에서 환경 변수 로드
+load_dotenv()
+
+# Firebase 초기화
+cred_path = os.getenv("FIREBASE_CRED_PATH")
+
 import requests
 import xmltodict
 import xml.etree.ElementTree as ET
