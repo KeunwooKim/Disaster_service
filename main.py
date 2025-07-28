@@ -53,6 +53,7 @@ try:
     cred = credentials.Certificate(cred_path)
     firebase_admin.initialize_app(cred)
     logging.info("✅ Firebase Admin SDK가 성공적으로 초기화되었습니다.")
+    logging.info(f"✅ Firebase Admin SDK version: {firebase_admin.__version__}")
 except Exception as e:
     logging.critical(f"❌ Firebase Admin SDK 초기화 중 오류 발생: {e}")
     sys.exit(1)
