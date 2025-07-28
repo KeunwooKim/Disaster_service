@@ -32,11 +32,22 @@ from firebase_admin import credentials
 from firebase_admin import messaging
 
 # Firebase 초기화
-# cred_path는 실제 서비스 계정 키 파일의 경로로 설정해야 합니다.
-# 예시: cred_path = os.getenv("FIREBASE_CRED_PATH", "/path/to/your/firebase-adminsdk.json")
-cred_path = "/root/Project_disaster/disaster-9dbd5-firebase-adminsdk-fbsvc-c4498ef23c.json"
-cred = credentials.Certificate(cred_path)
-firebase_admin.initialize_app(cred)
+cred_path = os.getenv("FIREBASE_CRED_PATH")
+if not cred_path:
+    logging.critical("FIREBASE_CRED_PATH 환경 변수가 설정되지 않았습니다. Firebase Admin SDK를 초기화할 수 없습니다.")
+    sys.exit(1)
+
+if not os.path.exists(cred_path):
+    logging.critical(f"Firebase 인증 파일을 찾을 수 없습니다: {cred_path}")
+    sys.exit(1)
+
+try:
+    cred = credentials.Certificate(cred_path)
+    firebase_admin.initialize_app(cred)
+    logging.info("✅ Firebase Admin SDK가 성공적으로 초기화되었습니다.")
+except Exception as e:
+    logging.critical(f"❌ Firebase Admin SDK 초기화 중 오류 발생: {e}")
+    sys.exit(1)
 
 # ---------------------------------------------------------------------------
 # 설정 및 전역변수
