@@ -12,12 +12,6 @@ from io import StringIO
 from uuid import uuid4, uuid5, NAMESPACE_DNS
 from dotenv import load_dotenv
 
-# .env 파일에서 환경 변수 로드
-load_dotenv()
-
-# Firebase 초기화
-cred_path = os.getenv("FIREBASE_CRED_PATH")
-
 import requests
 import xmltodict
 import xml.etree.ElementTree as ET
@@ -36,6 +30,14 @@ from ner_utils import extract_locations
 import firebase_admin
 from firebase_admin import credentials
 from firebase_admin import messaging
+
+# .env 파일의 절대 경로를 지정하여 로드
+dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
+if os.path.exists(dotenv_path):
+    load_dotenv(dotenv_path)
+    logging.info(f".env 파일에서 환경 변수를 로드했습니다: {dotenv_path}")
+else:
+    logging.warning(f".env 파일을 찾을 수 없습니다: {dotenv_path}")
 
 # Firebase 초기화
 cred_path = os.getenv("FIREBASE_CRED_PATH")
@@ -77,6 +79,9 @@ session_http = requests.Session()
 
 # FCM 알림 전역 상태 플래그
 FCM_NOTIFICATIONS_ENABLED = True
+
+# 유효하지 않은 FCM 토큰을 임시 저장하는 집합 (스크립트 실행 동안만 유지)
+INVALID_FCM_TOKENS = set()
 
 # 상수 정의
 STATION_CODES = {
@@ -223,6 +228,10 @@ def execute_cassandra(query: str, params: tuple):
         return False
 
 def send_fcm_notification(token: str, title: str, body: str):
+    global INVALID_FCM_TOKENS
+    if token in INVALID_FCM_TOKENS:
+        return
+
     try:
         message = messaging.Message(
             notification=messaging.Notification(
@@ -234,8 +243,10 @@ def send_fcm_notification(token: str, title: str, body: str):
         response = messaging.send(message)
         logging.info(f"FCM 메시지 전송 성공 (token: {token[:10]}..., response: {response})")
     except Exception as e:
-        if "invalid_grant" in str(e):
-            logging.error(f"FCM 메시지 전송 실패 (token: {token[:10]}...): 유효하지 않거나 만료된 토큰입니다.")
+        error_message = str(e).lower()
+        if 'registration-token-not-registered' in error_message or 'invalid-argument' in error_message or 'was not found' in error_message or 'not a valid fcm registration token' in error_message:
+            logging.warning(f"FCM 토큰이 유효하지 않아, 이번 실행에서는 다시 시도하지 않습니다 (token: {token[:10]}...).")
+            INVALID_FCM_TOKENS.add(token)
         else:
             logging.error(f"FCM 메시지 전송 실패 (token: {token[:10]}...): {e}")
 
@@ -313,7 +324,7 @@ def geocoding(address: str) -> dict:
         return {"lat": None, "lng": None}
 
     # 괄호 제거
-    cleaned_address = re.sub(r"\(.*?\)", "", address).strip()
+    cleaned_address = re.sub(r"\(.*\)", "", address).strip()
 
     # 캐시 조회
     if cleaned_address in geocode_cache:
@@ -365,7 +376,7 @@ def get_regioncode(address: str) -> int:
         return None
 
     # 괄호 제거
-    cleaned_address = re.sub(r"\(.*?\)", "", address).strip()
+    cleaned_address = re.sub(r"\(.*\)", "", address).strip()
 
     # 캐시 조회
     if cleaned_address in region_cache:
@@ -447,13 +458,17 @@ def insert_rtd_data(rtd_code, rtd_time, rtd_loc, rtd_details,
                 title = "재난문자 알림"
                 body = f"[{rtd_loc}] 재난문자: {', '.join(rtd_details)}"
 
-            # user_device 테이블에서 모든 device_token 조회
+            # user_device 테이블에서 모든 device_token 조회 -> 단일 토큰으로 변경
             try:
-                device_tokens_query = "SELECT device_token FROM user_device"
-                device_tokens_rows = connector.session.execute(device_tokens_query)
-                for token_row in device_tokens_rows:
-                    if token_row.device_token:
-                        send_fcm_notification(token_row.device_token, title, body)
+                # device_tokens_query = "SELECT device_token FROM user_device"
+                # device_tokens_rows = connector.session.execute(device_tokens_query)
+                # for token_row in device_tokens_rows:
+                #     if token_row.device_token:
+                #         send_fcm_notification(token_row.device_token, title, body)
+                
+                registration_token = 'd35HBpkSQnSgjtl3_EFM7F:APA91bG_q4ZD4oQphddswdda8hmeJq2wg17z9fVAGEjEvs5rY45fSIyYZ7elPgtCJeG8xryrfVnJcZ6PvrUGqSZqxndX7kExsKuR8Qs_rJrtPZogfcAUgiMKk'
+                send_fcm_notification(registration_token, title, body)
+
             except Exception as e:
                 logging.error(f"디바이스 토큰 조회 또는 FCM 발송 오류: {e}")
 
@@ -1093,7 +1108,8 @@ class DisasterMessageCrawler:
                         message_id, emergency_level, DM_ntype, DM_stype,
                         issuing_agency, issued_at, message_content
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s) IF NOT EXISTS
-                """), (
+                """, ()
+                ), (
                     int(msg['message_id']),
                     msg['emergency_level'],
                     msg['DM_ntype'],
