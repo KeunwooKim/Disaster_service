@@ -227,28 +227,7 @@ def execute_cassandra(query: str, params: tuple):
         logging.error(f"Cassandra 쿼리 실행 오류: {e}")
         return False
 
-def send_fcm_notification(token: str, title: str, body: str):
-    global INVALID_FCM_TOKENS
-    if token in INVALID_FCM_TOKENS:
-        return
 
-    try:
-        message = messaging.Message(
-            notification=messaging.Notification(
-                title=title,
-                body=body,
-            ),
-            token=token,
-        )
-        response = messaging.send(message)
-        logging.info(f"FCM 메시지 전송 성공 (token: {token[:10]}..., response: {response})")
-    except Exception as e:
-        error_message = str(e).lower()
-        if 'registration-token-not-registered' in error_message or 'invalid-argument' in error_message or 'was not found' in error_message or 'not a valid fcm registration token' in error_message:
-            logging.warning(f"FCM 토큰이 유효하지 않아, 이번 실행에서는 다시 시도하지 않습니다 (token: {token[:10]}...).")
-            INVALID_FCM_TOKENS.add(token)
-        else:
-            logging.error(f"FCM 메시지 전송 실패 (token: {token[:10]}...): {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -475,14 +454,14 @@ def insert_rtd_data(rtd_code, rtd_time, rtd_loc, rtd_details,
                 # 500개씩 끊어서 보내기 (FCM 멀티캐스트 최대 제한)
                 for i in range(0, len(tokens), 500):
                     chunk = tokens[i:i + 500]
-                    message = messaging.MulticastMessage(
+                    messages = [messaging.Message(
                         notification=messaging.Notification(
                             title=title,
                             body=body,
                         ),
-                        tokens=chunk,
-                    )
-                    response = messaging.send_multicast(message)
+                        token=token
+                    ) for token in chunk]
+                    response = messaging.send_all(messages)
                     logging.info(f"FCM 멀티캐스트 메시지 전송 ({i+1}-{i+len(chunk)}): {response.success_count} 성공, {response.failure_count} 실패")
 
                     if response.failure_count > 0:
@@ -1376,12 +1355,7 @@ class DisasterMessageCrawler:
         print(" ? → 명령어 도움말")
         print(" q 또는 exit → 종료")
 
-    def send_test_notification(self):
-        token = 'd35HBpkSQnSgjtl3_EFM7F:APA91bG_q4ZD4oQphddswdda8hmeJq2wg17z9fVAGEjEvs5rY45fSIyYZ7elPgtCJeG8xryrfVnJcZ6PvrUGqSZqxndX7kExsKuR8Qs_rJrtPZogfcAUgiMKk'
-        title = "테스트 알림"
-        body = "이것은 테스트 알림입니다."
-        send_fcm_notification(token, title, body)
-        print(f"테스트 알림을 다음 토큰으로 전송했습니다: {token}")
+    
 
     def check_messages(self):
         self.driver.get(
