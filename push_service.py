@@ -349,6 +349,8 @@ def get_reports_by_user(
                 "vote_id": row.vote_id,
             })
 
+        logging.info(f"get_reports_by_user: Fetched {len(rows)} rows, returning {len(results)} results.")
+
         return JSONResponse(content={"count": len(results), "results": results})
 
     except Exception as e:
