@@ -1055,17 +1055,17 @@ def get_warning_data():
         else:
             alert_type = "정보없음"
             alert_stat = "정보없음"
-        unique_str = f"{rtd_loc}_{alert_type}_{alert_stat}_{rtd_time.strftime('%Y%m%d%H%M')}"
+        unique_str = f"{rtd_loc}_{alert_type}_{rtd_time.strftime('%Y%m%d%H%M')}"
         announce_no = uuid5(NAMESPACE_DNS, unique_str)
         insert_query = """
         INSERT INTO ForecastAnnouncement (
-            announce_no, disaster_region, alert_type, alert_stat, announce_time, comment
+            announce_no, disaster_region, alert_type, announce_time, comment
         )
-        VALUES (%s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s)
         IF NOT EXISTS
         """
-        comment = f"기상특보 자동 수집 / {alert_type} {alert_stat}"
-        if execute_cassandra(insert_query, (announce_no, rtd_loc, alert_type, alert_stat, rtd_time, comment)):
+        comment = f"기상특보 자동 수집 / {alert_type}"
+        if execute_cassandra(insert_query, (announce_no, rtd_loc, alert_type, rtd_time, comment)):
             saved_count += 1
             insert_rtd_data(rtd_code, rtd_time, rtd_loc, rtd_details)
         else:
