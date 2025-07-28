@@ -180,6 +180,14 @@ scheduler = TaskScheduler()
 # ---------------------------------------------------------------------------
 # 공통 유틸리티 함수
 # ---------------------------------------------------------------------------
+def is_in_korea(lat, lon):
+    """주어진 좌표가 대한민국 영토 범위 내에 있는지 확인합니다."""
+    if lat is None or lon is None:
+        return False
+    # 대한민국 위도: 33 ~ 39, 경도: 124 ~ 132
+    return (33.0 <= lat <= 39.0) and (124.0 <= lon <= 132.0)
+
+
 def kst_to_utc(dt_str: str, fmt: str) -> datetime:
     """KST 시간 문자열을 UTC datetime 객체로 변환"""
     kst = timezone(timedelta(hours=9))
@@ -299,9 +307,17 @@ def geocoding(address: str) -> dict:
         location = geolocator.geocode(cleaned_address, timeout=5)
         if location:
             coords = {"lat": location.latitude, "lng": location.longitude}
-            geocode_cache[cleaned_address] = coords
-            save_geocode_cache()
-            return coords
+            # 대한민국 범위 확인
+            if is_in_korea(coords['lat'], coords['lng']):
+                geocode_cache[cleaned_address] = coords
+                save_geocode_cache()
+                return coords
+            else:
+                logging.warning(f"[지오코딩 범위 벗어남] ({cleaned_address}): {coords['lat']}, {coords['lng']}")
+                # 범위 벗어난 경우도 캐싱하여 반복 요청 방지
+                geocode_cache[cleaned_address] = {"lat": None, "lng": None}
+                save_geocode_cache()
+                return {"lat": None, "lng": None}
     except Exception as e:
         logging.warning(f"[지오코딩 실패] ({cleaned_address}): {e}")
         with open(FAILED_LOG_PATH, "a", encoding="utf-8") as f:
