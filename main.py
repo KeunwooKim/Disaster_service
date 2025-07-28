@@ -40,13 +40,16 @@ else:
     logging.warning(f".env 파일을 찾을 수 없습니다: {dotenv_path}")
 
 # Firebase 초기화
+logging.info(f"DEBUG: FIREBASE_CRED_PATH 환경 변수 값: {os.getenv("FIREBASE_CRED_PATH")}")
 cred_path = os.getenv("FIREBASE_CRED_PATH")
+logging.info(f"DEBUG: cred_path 변수 값: {cred_path}")
+
 if not cred_path:
     logging.critical("FIREBASE_CRED_PATH 환경 변수가 설정되지 않았습니다. Firebase Admin SDK를 초기화할 수 없습니다.")
     sys.exit(1)
 
 if not os.path.exists(cred_path):
-    logging.critical(f"Firebase 인증 파일을 찾을 수 없습니다: {cred_path}")
+    logging.critical(f"Firebase 인증 파일을 찾을 수 없습니다: {cred_path} (DEBUG: os.path.exists 결과: {os.path.exists(cred_path)})")
     sys.exit(1)
 
 try:
