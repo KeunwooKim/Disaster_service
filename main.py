@@ -458,16 +458,40 @@ def insert_rtd_data(rtd_code, rtd_time, rtd_loc, rtd_details,
                 title = "재난문자 알림"
                 body = f"[{rtd_loc}] 재난문자: {', '.join(rtd_details)}"
 
-            # user_device 테이블에서 모든 device_token 조회 -> 단일 토큰으로 변경
+            # user_device 테이블에서 모든 device_token 조회하여 멀티캐스트로 전송
             try:
-                # device_tokens_query = "SELECT device_token FROM user_device"
-                # device_tokens_rows = connector.session.execute(device_tokens_query)
-                # for token_row in device_tokens_rows:
-                #     if token_row.device_token:
-                #         send_fcm_notification(token_row.device_token, title, body)
+                device_tokens_query = "SELECT device_token FROM user_device"
+                device_tokens_rows = connector.session.execute(device_tokens_query)
                 
-                registration_token = 'd35HBpkSQnSgjtl3_EFM7F:APA91bG_q4ZD4oQphddswdda8hmeJq2wg17z9fVAGEjEvs5rY45fSIyYZ7elPgtCJeG8xryrfVnJcZ6PvrUGqSZqxndX7kExsKuR8Qs_rJrtPZogfcAUgiMKk'
-                send_fcm_notification(registration_token, title, body)
+                # 유효한 토큰만 리스트로 추출
+                tokens = [row.device_token for row in device_tokens_rows if row.device_token]
+
+                if not tokens:
+                    logging.warning("알림을 보낼 등록된 디바이스 토큰이 없습니다.")
+                    return
+
+                logging.info(f"총 {len(tokens)}개의 디바이스에 알림을 보냅니다.")
+                
+                # 500개씩 끊어서 보내기 (FCM 멀티캐스트 최대 제한)
+                for i in range(0, len(tokens), 500):
+                    chunk = tokens[i:i + 500]
+                    message = messaging.MulticastMessage(
+                        notification=messaging.Notification(
+                            title=title,
+                            body=body,
+                        ),
+                        tokens=chunk,
+                    )
+                    response = messaging.send_multicast(message)
+                    logging.info(f"FCM 멀티캐스트 메시지 전송 ({i+1}-{i+len(chunk)}): {response.success_count} 성공, {response.failure_count} 실패")
+
+                    if response.failure_count > 0:
+                        failed_tokens = []
+                        for idx, resp in enumerate(response.responses):
+                            if not resp.success:
+                                # 실패한 토큰 로깅
+                                failed_tokens.append(chunk[idx])
+                        logging.warning(f"실패한 토큰: {failed_tokens}")
 
             except Exception as e:
                 logging.error(f"디바이스 토큰 조회 또는 FCM 발송 오류: {e}")
@@ -642,7 +666,7 @@ def fetch_earthquake_data():
     current_time = datetime.now(kst).strftime('%Y%m%d%H%M%S')
     url = f"https://apihub.kma.go.kr/api/typ01/url/eqk_now.php?tm={current_time}&disp=0&help=1&authKey={EQ_API_KEY}"
     try:
-        response = session_http.get(url, timeout=15)
+        response = session_http.get(url, timeout=30)
         response.raise_for_status()
         logging.info("지진 API 연결 확인")
         response.encoding = 'euc-kr'
