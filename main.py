@@ -1325,6 +1325,8 @@ class DisasterMessageCrawler:
             print("=======================")
         elif cmd == "edit_rtd":
             self.edit_rtd_entry()
+        elif cmd == "test_fcm":
+            self.send_test_notification()
         elif cmd == "?":
             self.display_help()
         else:
@@ -1346,8 +1348,16 @@ class DisasterMessageCrawler:
         print(" set_interval <task_name> <초> → 지정 작업 주기 수정")
         print(" list_intervals → 현재 등록된 스케줄 주기 확인")
         print(" edit_rtd → rtd_db 항목 수정 (ID 입력 후 컬럼/값 순차적으로 입력)")
+        print(" test_fcm → 테스트 FCM 알림 발송")
         print(" ? → 명령어 도움말")
         print(" q 또는 exit → 종료")
+
+    def send_test_notification(self):
+        token = 'd35HBpkSQnSgjtl3_EFM7F:APA91bG_q4ZD4oQphddswdda8hmeJq2wg17z9fVAGEjEvs5rY45fSIyYZ7elPgtCJeG8xryrfVnJcZ6PvrUGqSZqxndX7kExsKuR8Qs_rJrtPZogfcAUgiMKk'
+        title = "테스트 알림"
+        body = "이것은 테스트 알림입니다."
+        send_fcm_notification(token, title, body)
+        print(f"테스트 알림을 다음 토큰으로 전송했습니다: {token}")
 
     def check_messages(self):
         self.driver.get(
@@ -1444,13 +1454,13 @@ def main():
     # 스케줄러 시작 (백그라운드 스레드)
     scheduler.start()
 
-    # 초기 수집 함수 실행 (옵션)
-    get_air_inform()
-    get_air_grade()
-    fetch_earthquake_data()
-    get_typhoon_data()
-    get_flood_data()
-    get_warning_data()
+    # # 초기 수집 함수 실행 (옵션) -> 시작 시 알림이 가지 않도록 주석 처리
+    # get_air_inform()
+    # get_air_grade()
+    # fetch_earthquake_data()
+    # get_typhoon_data()
+    # get_flood_data()
+    # get_warning_data()
 
     # 재난문자 모니터링 시작 (명령어 기반 인터페이스)
     DisasterMessageCrawler().monitor()
