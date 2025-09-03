@@ -458,14 +458,14 @@ def insert_rtd_data(rtd_code, rtd_time, rtd_loc, rtd_details,
                 # 500개씩 끊어서 보내기 (FCM 멀티캐스트 최대 제한)
                 for i in range(0, len(tokens), 500):
                     chunk = tokens[i:i + 500]
-                    messages = [messaging.Message(
+                    message = messaging.MulticastMessage(
                         notification=messaging.Notification(
                             title=title,
                             body=body,
                         ),
-                        token=token
-                    ) for token in chunk]
-                    response = messaging.send_all(messages)
+                        tokens=chunk,
+                    )
+                    response = messaging.send_multicast(message)
                     logging.info(f"FCM 멀티캐스트 메시지 전송 ({i+1}-{i+len(chunk)}): {response.success_count} 성공, {response.failure_count} 실패")
 
                     if response.failure_count > 0:
@@ -1234,6 +1234,49 @@ class DisasterMessageCrawler:
 
     # process_command에 edit_rtd 명령어 처리 추가
     # display_help에도 안내 문구 추가
+
+    def send_test_notification(self):
+        """테스트 FCM 알림을 모든 등록된 디바이스에 전송합니다."""
+        global FCM_NOTIFICATIONS_ENABLED
+        if not FCM_NOTIFICATIONS_ENABLED:
+            print("FCM 알림이 비활성화되어 있습니다. 'toggle_fcm'으로 활성화해주세요.")
+            return
+
+        print("테스트 FCM 알림을 전송합니다...")
+        try:
+            # user_device 테이블에서 모든 device_token 조회
+            device_tokens_query = "SELECT device_token FROM user_device"
+            device_tokens_rows = connector.session.execute(device_tokens_query)
+            tokens = [row.device_token for row in device_tokens_rows if row.device_token]
+
+            if not tokens:
+                print("알림을 보낼 등록된 디바이스 토큰이 없습니다.")
+                return
+
+            print(f"총 {len(tokens)}개의 디바이스에 테스트 알림을 보냅니다.")
+
+            # 500개씩 끊어서 보내기
+            for i in range(0, len(tokens), 500):
+                chunk = tokens[i:i + 500]
+                message = messaging.MulticastMessage(
+                    notification=messaging.Notification(
+                        title="테스트 알림",
+                        body="이것은 Gemini CLI에서 보내는 테스트 재난 알림입니다.",
+                    ),
+                    tokens=chunk,
+                )
+                response = messaging.send_multicast(message)
+                print(f"FCM 멀티캐스트 메시지 전송 ({i+1}-{i+len(chunk)}): {response.success_count} 성공, {response.failure_count} 실패")
+
+                if response.failure_count > 0:
+                    failed_tokens = []
+                    for idx, resp in enumerate(response.responses):
+                        if not resp.success:
+                            failed_tokens.append(chunk[idx])
+                    print(f"실패한 토큰: {failed_tokens}")
+
+        except Exception as e:
+            print(f"테스트 FCM 발송 중 오류 발생: {e}")
 
     def check_and_save(self):
         messages = self.check_messages()
