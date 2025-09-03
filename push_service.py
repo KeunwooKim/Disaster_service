@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from uuid import uuid4
 from fastapi import Query
 from fastapi import Body
+from fcm_sender import send_broadcast_data_message
 
 # 환경 변수 로드 (.env 파일 활용)
 load_dotenv()
@@ -216,7 +217,21 @@ def create_user_report(request: UserReportRequest):
 
         logging.info(f"New user report created: report_id={report_id}, report_time={report_time}")
 
-        return {"message": "제보가 성공적으로 저장되었습니다.", "report_id": str(report_id)}
+        # Send broadcast notification for the new user report
+        data_payload = {
+            'type': 'report',
+            'report_id': str(report_id),
+            'report_by': request.userId,
+            'disaster_type': request.disasterType,
+            'report_time': report_time.isoformat(),
+            'report_loc': request.disasterPos if request.disasterPos else '',
+            'latitude': str(request.latitude) if request.latitude is not None else '',
+            'longitude': str(request.longitude) if request.longitude is not None else '',
+            'content': request.reportContent if request.reportContent else ''
+        }
+        send_broadcast_data_message(data_payload)
+
+        return {"message": "제보가 성공적으로 저장 및 전파되었습니다.", "report_id": str(report_id)}
 
     except HTTPException:
         raise

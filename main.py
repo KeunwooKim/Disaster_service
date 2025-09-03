@@ -26,10 +26,7 @@ from selenium.webdriver.chrome.service import Service
 import pandas as pd
 from functools import partial
 from ner_utils import extract_locations
-
-import firebase_admin
-from firebase_admin import credentials
-from firebase_admin import messaging
+from fcm_sender import send_broadcast_data_message
 
 # .env 파일의 절대 경로를 지정하여 로드
 dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
@@ -38,28 +35,6 @@ if os.path.exists(dotenv_path):
     logging.info(f".env 파일에서 환경 변수를 로드했습니다: {dotenv_path}")
 else:
     logging.warning(f".env 파일을 찾을 수 없습니다: {dotenv_path}")
-
-# Firebase 초기화
-logging.info(f"DEBUG: FIREBASE_CRED_PATH 환경 변수 값: {os.getenv('FIREBASE_CRED_PATH')}")
-cred_path = os.getenv("FIREBASE_CRED_PATH")
-logging.info(f"DEBUG: cred_path 변수 값: {cred_path}")
-
-if not cred_path:
-    logging.critical("FIREBASE_CRED_PATH 환경 변수가 설정되지 않았습니다. Firebase Admin SDK를 초기화할 수 없습니다.")
-    sys.exit(1)
-
-if not os.path.exists(cred_path):
-    logging.critical(f"Firebase 인증 파일을 찾을 수 없습니다: {cred_path} (DEBUG: os.path.exists 결과: {os.path.exists(cred_path)})")
-    sys.exit(1)
-
-try:
-    cred = credentials.Certificate(cred_path)
-    firebase_admin.initialize_app(cred)
-    logging.info("✅ Firebase Admin SDK가 성공적으로 초기화되었습니다.")
-    logging.info(f"✅ Firebase Admin SDK version: {firebase_admin.__version__}")
-except Exception as e:
-    logging.critical(f"❌ Firebase Admin SDK 초기화 중 오류 발생: {e}")
-    sys.exit(1)
 
 # ---------------------------------------------------------------------------
 # 설정 및 전역변수
@@ -415,69 +390,18 @@ def insert_rtd_data(rtd_code, rtd_time, rtd_loc, rtd_details,
         # FCM 알림 발송 로직 추가 (FCM_NOTIFICATIONS_ENABLED가 True일 때만)
         global FCM_NOTIFICATIONS_ENABLED
         if FCM_NOTIFICATIONS_ENABLED:
-            title = "재난 알림"
-            body = f"새로운 재난 정보가 발생했습니다: {rtd_loc} - {', '.join(rtd_details)}"
-
-            # rtd_code에 따른 알림 내용 커스터마이징
-            if rtd_code == 72: # 대기질 예보
-                title = "대기질 예보 알림"
-                body = f"[{rtd_loc}] 대기질 예보: {', '.join(rtd_details)}"
-            elif rtd_code == 71: # 실시간 대기질 등급
-                title = "실시간 대기질 알림"
-                body = f"[{rtd_loc}] 실시간 대기질: {', '.join(rtd_details)}"
-            elif rtd_code == 51: # 지진 정보
-                title = "지진 발생 알림"
-                body = f"[{rtd_loc}] 지진 발생: {', '.join(rtd_details)}"
-            elif rtd_code == 31: # 태풍 정보
-                title = "태풍 정보 알림"
-                body = f"[{rtd_loc}] 태풍 정보: {', '.join(rtd_details)}"
-            elif rtd_code == 33: # 홍수 정보
-                title = "홍수 정보 알림"
-                body = f"[{rtd_loc}] 홍수 정보: {', '.join(rtd_details)}"
-            elif rtd_code in WARNING_CODES.values(): # 기상특보
-                title = "기상특보 알림"
-                body = f"[{rtd_loc}] 기상특보: {', '.join(rtd_details)}"
-            elif rtd_code == 21: # 재난문자
-                title = "재난문자 알림"
-                body = f"[{rtd_loc}] 재난문자: {', '.join(rtd_details)}"
-
-            # user_device 테이블에서 모든 device_token 조회하여 멀티캐스트로 전송
-            try:
-                device_tokens_query = "SELECT device_token FROM user_device"
-                device_tokens_rows = connector.session.execute(device_tokens_query)
-                
-                # 유효한 토큰만 리스트로 추출
-                tokens = [row.device_token for row in device_tokens_rows if row.device_token]
-
-                if not tokens:
-                    logging.warning("알림을 보낼 등록된 디바이스 토큰이 없습니다.")
-                    return
-
-                logging.info(f"총 {len(tokens)}개의 디바이스에 알림을 보냅니다.")
-                
-                # 500개씩 끊어서 보내기 (FCM 멀티캐스트 최대 제한)
-                for i in range(0, len(tokens), 500):
-                    chunk = tokens[i:i + 500]
-                    message = messaging.MulticastMessage(
-                        notification=messaging.Notification(
-                            title=title,
-                            body=body,
-                        ),
-                        tokens=chunk,
-                    )
-                    response = messaging.send_each_for_multicast(message)
-                    logging.info(f"FCM 멀티캐스트 메시지 전송 ({i+1}-{i+len(chunk)}): {response.success_count} 성공, {response.failure_count} 실패")
-
-                    if response.failure_count > 0:
-                        failed_tokens = []
-                        for idx, resp in enumerate(response.responses):
-                            if not resp.success:
-                                # 실패한 토큰 로깅
-                                failed_tokens.append(chunk[idx])
-                        logging.warning(f"실패한 토큰: {failed_tokens}")
-
-            except Exception as e:
-                logging.error(f"디바이스 토큰 조회 또는 FCM 발송 오류: {e}")
+            # Construct the data payload
+            data_payload = {
+                'type': 'rtd',  # 시스템 감지 재난
+                'rtd_code': str(rtd_code),
+                'rtd_time': rtd_time.isoformat(),
+                'rtd_loc': rtd_loc,
+                'latitude': str(latitude) if latitude is not None else '',
+                'longitude': str(longitude) if longitude is not None else '',
+                'details': json.dumps(rtd_details, ensure_ascii=False)
+            }
+            # Call the shared sender function
+            send_broadcast_data_message(data_payload)
 
     else:
         logging.error(f"RTD 저장 실패: {rec_id}")

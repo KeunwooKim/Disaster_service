@@ -51,17 +51,20 @@ except Exception as e:
 
 def send_fcm_notification(token: str, title: str, body: str):
     try:
+        # 데이터 메시지로 변경
         message = messaging.Message(
-            notification=messaging.Notification(
-                title=title,
-                body=body,
-            ),
+            data={
+                'title': title,
+                'body': body,
+                # 필요에 따라 커스텀 데이터 추가 가능
+                # 'custom_key': 'custom_value'
+            },
             token=token,
         )
         response = messaging.send(message)
-        logging.info(f"FCM 메시지 전송 성공 (token: {token[:10]}..., response: {response})")
+        logging.info(f"FCM 데이터 메시지 전송 성공 (token: {token[:10]}..., response: {response})")
     except Exception as e:
-        logging.error(f"FCM 메시지 전송 실패 (token: {token[:10]}...): {e}")
+        logging.error(f"FCM 데이터 메시지 전송 실패 (token: {token[:10]}...): {e}")
 
 def get_all_users_with_tokens():
     try:
