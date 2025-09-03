@@ -89,3 +89,35 @@ def send_broadcast_data_message(data_payload: dict):
 
     except Exception as e:
         logging.error(f"데이터 메시지 전송 중 오류 발생: {e}")
+
+def send_data_message_to_tokens(tokens: list, data_payload: dict):
+    """
+    Sends a data message to a specific list of device tokens.
+    """
+    if not tokens:
+        logging.warning("전송할 대상 토큰이 없습니다.")
+        return
+
+    try:
+        logging.info(f"총 {len(tokens)}개의 특정 디바이스에 데이터 메시지를 전송합니다.")
+        logging.info(f"전송할 데이터 페이로드: {data_payload}")
+
+        # Send the data message to the specified tokens in chunks
+        for i in range(0, len(tokens), 500):
+            chunk = tokens[i:i + 500]
+            message = messaging.MulticastMessage(
+                data=data_payload,
+                tokens=chunk,
+            )
+            response = messaging.send_each_for_multicast(message)
+            logging.info(f"FCM 데이터 메시지 전송 ({i+1}-{i+len(chunk)}): {response.success_count} 성공, {response.failure_count} 실패")
+
+            if response.failure_count > 0:
+                failed_tokens = []
+                for idx, resp in enumerate(response.responses):
+                    if not resp.success:
+                        failed_tokens.append(chunk[idx])
+                logging.warning(f"실패한 토큰: {failed_tokens}")
+
+    except Exception as e:
+        logging.error(f"특정 토큰에 데이터 메시지 전송 중 오류 발생: {e}")
