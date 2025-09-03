@@ -554,6 +554,9 @@ class UserDeviceRequest(BaseModel):
     user_id: str
     device_token: str
 
+class DeleteDeviceRequest(BaseModel):
+    device_token: str
+
 # 디바이스 등록 API
 @app.post("/devices/register")
 def register_device(data: UserDeviceRequest):
@@ -639,6 +642,33 @@ def get_devices(user_id: Optional[str] = Query(None, description="user_id로 필
     except Exception as e:
         logging.error(f"디바이스 조회 실패: {e}")
         raise HTTPException(status_code=500, detail="디바이스 조회 실패")
+
+# 디바이스 삭제 API
+@app.post("/devices/delete")
+def delete_device(data: DeleteDeviceRequest):
+    try:
+        # device_token으로 user_id 찾기
+        find_query = "SELECT user_id FROM user_device WHERE device_token = %s ALLOW FILTERING"
+        row = session.execute(find_query, (data.device_token,)).one()
+
+        if not row:
+            return JSONResponse(
+                status_code=404,
+                content={"message": "삭제할 디바이스 토큰을 찾을 수 없습니다."}
+            )
+
+        user_id_to_delete = row.user_id
+
+        # user_id를 사용하여 레코드 삭제
+        delete_query = "DELETE FROM user_device WHERE user_id = %s"
+        session.execute(delete_query, (user_id_to_delete,))
+
+        logging.info(f"디바이스가 성공적으로 삭제되었습니다: {data.device_token}")
+        return {"message": "디바이스가 성공적으로 삭제되었습니다."}
+    except Exception as e:
+        logging.error(f"디바이스 삭제 실패: {e}")
+        raise HTTPException(status_code=500, detail="디바이스 삭제 실패")
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
