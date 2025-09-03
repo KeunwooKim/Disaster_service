@@ -465,7 +465,7 @@ def insert_rtd_data(rtd_code, rtd_time, rtd_loc, rtd_details,
                         ),
                         tokens=chunk,
                     )
-                    response = messaging.send_multicast(message)
+                    response = messaging.send_each_for_multicast(message)
                     logging.info(f"FCM 멀티캐스트 메시지 전송 ({i+1}-{i+len(chunk)}): {response.success_count} 성공, {response.failure_count} 실패")
 
                     if response.failure_count > 0:
@@ -1265,7 +1265,7 @@ class DisasterMessageCrawler:
                     ),
                     tokens=chunk,
                 )
-                response = messaging.send_multicast(message)
+                response = messaging.send_each_for_multicast(message)
                 print(f"FCM 멀티캐스트 메시지 전송 ({i+1}-{i+len(chunk)}): {response.success_count} 성공, {response.failure_count} 실패")
 
                 if response.failure_count > 0:
