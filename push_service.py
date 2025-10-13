@@ -104,7 +104,6 @@ def get_user_report_history(
                 SELECT * FROM user_report_by_user_time
                 WHERE report_by_id = %s AND report_at >= %s AND report_at <= %s
                 ALLOW FILTERING
-                ORDER BY report_at DESC
             """
             rows = list(session.execute(query, (userId, start_time, end_time)))
         else:
