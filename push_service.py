@@ -106,14 +106,14 @@ def get_user_report_history(
                 ALLOW FILTERING
                 ORDER BY report_at DESC
             """
-            rows = session.execute(query, (userId, start_time, end_time))
+            rows = list(session.execute(query, (userId, start_time, end_time)))
         else:
             query = """
                 SELECT * FROM user_report_by_time
                 WHERE report_at >= %s AND report_at <= %s
                 ALLOW FILTERING
             """
-            rows = session.execute(query, (start_time, end_time))
+            rows = list(session.execute(query, (start_time, end_time)))
 
         reports = []
         for row in rows:
@@ -346,7 +346,7 @@ def get_reports_by_user(
             WHERE report_by_id = %s
             LIMIT %s
         """
-        rows = session.execute(query, (user_id, limit))
+        rows = list(session.execute(query, (user_id, limit)))
 
         results = []
         for row in rows:
