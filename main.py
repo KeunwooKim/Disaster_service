@@ -1005,7 +1005,65 @@ def get_warning_data():
 
 
 # ---------------------------------------------------------------------------
-# 7. 재난문자 크롤러 (명령어 인터페이스 포함)
+# 7. 오래된 사용자 제보 비활성화
+# ---------------------------------------------------------------------------
+def deactivate_old_user_reports():
+    """3일이 지난 사용자 제보 중 visible=true인 항목을 false로 변경합니다."""
+    logging.info("오래된 사용자 제보 비활성화 작업 시작")
+    three_days_ago = datetime.now(timezone.utc) - timedelta(days=3)
+
+    try:
+        # user_report_by_time 테이블을 사용하여 3일 이전의 제보를 조회합니다.
+        # 이 테이블은 시간 기반 조회를 위해 존재할 가능성이 높습니다.
+        # 기존 코드에서 ALLOW FILTERING을 사용하므로 동일한 패턴을 따릅니다.
+        select_query = """
+            SELECT report_by_id, report_at, visible
+            FROM user_report_by_time
+            WHERE report_at < %s ALLOW FILTERING
+        """
+        rows = connector.session.execute(select_query, (three_days_ago,))
+
+        reports_to_update = []
+        for row in rows:
+            if row.visible:
+                reports_to_update.append((row.report_by_id, row.report_at))
+
+        if not reports_to_update:
+            logging.info("비활성화할 오래된 사용자 제보가 없습니다.")
+            print("비활성화할 오래된 사용자 제보가 없습니다.")
+            return
+
+        logging.info(f"총 {len(reports_to_update)}개의 오래된 제보를 비활성화합니다.")
+        print(f"총 {len(reports_to_update)}개의 오래된 제보를 비활성화합니다.")
+
+        # BatchStatement를 사용하여 여러 업데이트를 한 번에 처리
+        from cassandra.query import BatchStatement, SimpleStatement
+        batch = BatchStatement()
+        update_query = "UPDATE user_report SET visible = false WHERE report_by_id = %s AND report_at = %s"
+        
+        updated_count = 0
+        for report_by_id, report_at in reports_to_update:
+            batch.add(SimpleStatement(update_query), (report_by_id, report_at))
+            updated_count += 1
+            # 카산드라 배치 크기 제한을 고려하여 100개마다 실행
+            if updated_count % 100 == 0:
+                connector.session.execute(batch)
+                batch.clear()
+                logging.info(f"{updated_count}개 제보 비활성화 처리 중...")
+
+        if len(batch) > 0:
+            connector.session.execute(batch)
+
+        logging.info(f"오래된 사용자 제보 비활성화 작업 완료. 총 {updated_count}개 처리.")
+        print(f"오래된 사용자 제보 비활성화 작업 완료. 총 {updated_count}개 처리.")
+
+    except Exception as e:
+        logging.error(f"오래된 사용자 제보 비활성화 중 오류 발생: {e}")
+        print(f"오래된 사용자 제보 비활성화 중 오류 발생: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 8. 재난문자 크롤러 (명령어 인터페이스 포함)
 # ---------------------------------------------------------------------------
 class DisasterMessageCrawler:
     def __init__(self):
@@ -1274,6 +1332,9 @@ class DisasterMessageCrawler:
                 logging.info(f"신규 메시지 {len(messages)}건 저장됨")
             else:
                 logging.info("신규 재난문자 없음")
+        elif cmd == "10":
+            logging.info("오래된 제보 비활성화 작업 시작")
+            deactivate_old_user_reports()
         elif cmd == "toggle_fcm":
             FCM_NOTIFICATIONS_ENABLED = not FCM_NOTIFICATIONS_ENABLED
             print(f"FCM 알림이 {'활성화' if FCM_NOTIFICATIONS_ENABLED else '비활성화'}되었습니다.")
@@ -1318,6 +1379,7 @@ class DisasterMessageCrawler:
         print(" 7 → 홍수 정보 수집")
         print(" 8 → 기상특보(주의보/경보) 정보 수집")
         print(" 9 → 재난문자 수집")
+        print(" 10 → 3일 지난 제보 비활성화")
         print(" toggle_fcm → FCM 알림 활성화/비활성화")
         print(" set_interval <task_name> <초> → 지정 작업 주기 수정")
         print(" list_intervals → 현재 등록된 스케줄 주기 확인")
@@ -1419,6 +1481,7 @@ def main():
     scheduler.add_task("flood", 36000, get_flood_data)  # 홍수: 10시간
     scheduler.add_task("warning", 36000, get_warning_data)  # 기상특보: 10시간
     scheduler.add_task("disaster_messages", 600, partial(DisasterMessageCrawler().check_and_save))
+    scheduler.add_task("deactivate_reports", 86400, deactivate_old_user_reports) # 24시간
 
     # 스케줄러 시작 (백그라운드 스레드)
     scheduler.start()
