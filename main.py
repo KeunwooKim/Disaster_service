@@ -1076,6 +1076,7 @@ class DisasterMessageCrawler:
         self.wait = WebDriverWait(self.driver, 20)
         self.session = connector.session
         self.seen_ids = set()
+        self.filter_keywords = ["찾습니다", "배회중인", "실종된", "실종"]
 
     def message_exists(self, msg_id):
         from cassandra.query import SimpleStatement
@@ -1414,6 +1415,12 @@ class DisasterMessageCrawler:
                 content = row.find_element(By.ID, f"disasterSms_tr_{idx}_MSG_CN").get_attribute("title").strip()
             except Exception as e:
                 logging.error(f"필드 추출 오류 (row {row_id}): {e}")
+                continue
+
+            # 재난문자 내용 필터링: 실종/찾기 관련 메시지는 제외
+            if any(keyword in content for keyword in self.filter_keywords):
+                matched_keywords = [k for k in self.filter_keywords if k in content]
+                logging.info(f"필터링된 메시지 (키워드 {matched_keywords} 포함): {msg_id} - {content}")
                 continue
 
             if msg_id in self.seen_ids or self.message_exists(msg_id):
